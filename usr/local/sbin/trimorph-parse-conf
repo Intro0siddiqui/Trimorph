@@ -1,0 +1,24 @@
+#!/bin/bash
+# Safe INI parser — NO eval, NO code injection
+
+conf="$1"
+if [[ ! -f "$conf" ]]; then
+    echo "error: config not found: $conf" >&2; exit 1
+fi
+
+declare -A cfg
+while IFS='=' read -r key val; do
+    [[ $key =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${key// }" ]] && continue
+    key="${key%%#*}"           # strip inline comments
+    key="${key//[[:space:]]}"  # normalize
+    val="${val##*[[:space:]]}"
+    val="${val%[[:space:]]*}"
+    [[ -z "$key" ]] && continue
+    cfg["$key"]="$val"
+done < <(grep -v '^\[' "$conf")
+
+# Output as shell assignments (safe for source)
+for k in "${!cfg[@]}"; do
+    printf '%s=%q\n' "TRIMORPH_$k" "${cfg[$k]}"
+done

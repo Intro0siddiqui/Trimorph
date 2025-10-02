@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+jail="$1"; [[ -n "$jail" ]] || { echo "Usage: $0 <jail>"; exit 1; }
+conf="/etc/trimorph/jails.d/$jail.conf"
+[[ -f "$conf" ]] || { echo "error: config not found"; exit 1; }
+
+source <(trimorph-parse-conf "$conf")
+echo "Bootstrapping $jail into ${TRIMORPH_root}..."
+
+# Ensure root and log directories exist and are owned by user
+sudo mkdir -p /var/log/trimorph "$TRIMORPH_root"
+sudo chown -R "$(id -u):$(id -g)" "$TRIMORPH_root"
+
+# Run bootstrap command as root (safe: defined in config)
+sudo bash -c "${TRIMORPH_bootstrap//\{root\}/$TRIMORPH_root}"
+
+# Mark as initialized
+sudo mkdir -p /etc/trimorph/runtime
+sudo touch "/etc/trimorph/runtime/${jail}.initialized"
+echo "✅ Jail '$jail' ready."

@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <jail> <cmd> [args...]" >&2; exit 1
+fi
+
+jail="$1"; shift
+conf="/etc/trimorph/jails.d/$jail.conf"
+[[ -f "$conf" ]] || { echo "error: no config for jail '$jail'" >&2; exit 1; }
+
+# Load config safely
+source <(trimorph-parse-conf "$conf")
+
+# Check initialization
+init_marker="/etc/trimorph/runtime/${jail}.initialized"
+[[ -f "$init_marker" ]] || { echo "error: jail '$jail' not bootstrapped. Run 'trimorph-bootstrap $jail'" >&2; exit 1; }
+
+# Stop all OTHER active trimorph scopes
+for scope in /run/systemd/transient/trimorph-*.scope; do
+    [[ -e "$scope" ]] || continue
+    scope_name=$(basename "$scope" .scope)
+    [[ "$scope_name" == "trimorph-$jail" ]] && continue
+    echo "Stopping $scope_name..." >&2
+    systemctl stop "$scope_name" 2>/dev/null || true
+done
+
+# Prepare mounts (only safe, necessary paths)
+bind_mounts="--bind-ro=/tmp/.X11-unix --bind-ro=/dev/dri --bind-ro=/etc/resolv.conf"
+custom_mounts="${TRIMORPH_mounts:-}"
+if [[ -n "$custom_mounts" ]]; then
+    IFS=',' read -ra mnt <<< "$custom_mounts"
+    for d in "${mnt[@]}"; do
+        d=$(echo "$d" | xargs)
+        [[ -e "$d" ]] && bind_mounts="$bind_mounts --bind-ro=$d"
+    done
+fi
+
+# Build environment
+env_vars=""
+IFS=',' read -ra env_list <<< "${TRIMORPH_env:-}"
+for e in "${env_list[@]}"; do
+    e=$(echo "$e" | xargs)
+    [[ "$e" == *=* ]] && env_vars="$env_vars --setenv=${e}"
+done
+
+# Base command
+cmd=(systemd-run \
+    --scope \
+    --slice=trimorph.slice \
+    --uid="$(id -u)" \
+    --gid="$(id -g)" \
+    --pipe \
+    --wait \
+    --description="trimorph-$jail" \
+    systemd-nspawn \
+        --quiet \
+        --directory="$TRIMORPH_root" \
+        --user="$(id -un)" \
+        $bind_mounts \
+        $env_vars \
+        "$TRIMORPH_pkgmgr" $TRIMORPH_pkgmgr_args "$@")
+
+# Launch in transient scope, with optional logging
+if [[ -n "${TRIMORPH_DEBUG:-}" ]]; then
+    log_file="/var/log/trimorph/${jail}.log"
+    echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Executing: ${TRIMORPH_pkgmgr} ${TRIMORPH_pkgmgr_args:-} $@" >> "$log_file"
+    "${cmd[@]}" 2>&1 | tee -a "$log_file"
+else
+    exec "${cmd[@]}"
+fi
