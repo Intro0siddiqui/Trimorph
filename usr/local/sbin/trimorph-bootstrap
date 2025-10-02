@@ -8,8 +8,10 @@ conf="/etc/trimorph/jails.d/$jail.conf"
 source <(trimorph-parse-conf "$conf")
 echo "Bootstrapping $jail into ${TRIMORPH_root}..."
 
-# Ensure root and log directories exist and are owned by user
-sudo mkdir -p /var/log/trimorph "$TRIMORPH_root"
+# Ensure root and log directories exist. /var/log/trimorph remains root-owned.
+sudo mkdir -p "$TRIMORPH_root" /var/log/trimorph
+
+# Grant user ownership of only the jail root directory
 sudo chown -R "$(id -u):$(id -g)" "$TRIMORPH_root"
 
 # Run bootstrap command as root (safe: defined in config)

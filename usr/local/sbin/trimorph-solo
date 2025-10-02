@@ -64,8 +64,16 @@ cmd=(systemd-run \
 # Launch in transient scope, with optional logging
 if [[ -n "${TRIMORPH_DEBUG:-}" ]]; then
     log_file="/var/log/trimorph/${jail}.log"
+    # Securely create the log file and set its ownership to the current user.
+    # This requires sudo because /var/log/trimorph is root-owned.
+    sudo touch "$log_file"
+    sudo chown "$(id -u):$(id -g)" "$log_file"
+
     echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Executing: ${TRIMORPH_pkgmgr} ${TRIMORPH_pkgmgr_args:-} $@" >> "$log_file"
+    # Execute the command, piping output to the user-owned log file.
+    # No 'exec' is used here to maintain consistent script behavior.
     "${cmd[@]}" 2>&1 | tee -a "$log_file"
 else
-    exec "${cmd[@]}"
+    # No 'exec' is used here to maintain consistent script behavior.
+    "${cmd[@]}"
 fi
