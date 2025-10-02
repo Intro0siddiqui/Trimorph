@@ -1,0 +1,9 @@
+if [[ ${EBUILD_PHASE} == "setup" ]] && command -v systemctl >/dev/null; then
+    # Kill any active trimorph scope before emerge
+    for scope in trimorph-*.scope; do
+        if systemctl is-active --quiet "$scope" 2>/dev/null; then
+            echo "Stopping $scope for emerge..." >&2
+            systemctl stop "$scope"
+        fi
+    done
+fi
