@@ -123,8 +123,39 @@ An optional hook that automatically stops any active Trimorph jail before a Port
 ### 7.1 Status & Cleanup
 -   `trimorph-status`: Checks and displays the status of all configured jails (active or inactive).
 -   `trimorph-cleanup`: Immediately stops all running Trimorph scopes.
+-   `trimorph-tui`: A new terminal UI for monitoring and managing jails.
 
-### 7.2 Debugging & Logging
+### 7.2 Parallel Mode (Expert)
+By default, Trimorph ensures only one jail runs at a time. For advanced use cases, you can enable parallel execution with the `--parallel` flag.
+
+**Usage:**
+```bash
+trimorph-solo --parallel <jail> <command>
+```
+**Warning:** Running multiple jails concurrently can consume significant system resources and may lead to unexpected conflicts. Use with caution.
+
+### 7.3 Terminal UI (TUI)
+Trimorph now includes a terminal-based user interface for a real-time view of your jails.
+
+**To build and run:**
+```bash
+# Navigate to the TUI directory
+cd tui
+
+# Build the TUI (requires Rust)
+cargo build --release
+
+# Run the TUI
+./target/release/trimorph-tui
+```
+
+**Features:**
+-   **Live Jail Status**: See which jails are active.
+-   **Log Viewer**: Tail logs for any jail in real-time.
+-   **Resource Monitoring**: View CPU and Memory usage for active jails.
+-   **Customizable**: Create a `tui.toml` file in `~/.config/trimorph/` to set custom color themes.
+
+### 7.4 Debugging & Logging
 Trimorph includes an optional logging feature to help with troubleshooting. When enabled, all output from commands executed within a jail is saved to a log file.
 
 **To enable logging:**

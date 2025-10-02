@@ -2,7 +2,14 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <jail> <cmd> [args...]" >&2; exit 1
+    echo "Usage: $0 [--parallel] <jail> <cmd> [args...]" >&2; exit 1
+fi
+
+parallel_mode=0
+if [[ "$1" == "--parallel" ]]; then
+    parallel_mode=1
+    shift
+    echo "Warning: Parallel mode enabled. Multiple jails may consume significant resources and could cause unexpected conflicts." >&2
 fi
 
 jail="$1"; shift
@@ -16,14 +23,16 @@ source <(trimorph-parse-conf "$conf")
 init_marker="/etc/trimorph/runtime/${jail}.initialized"
 [[ -f "$init_marker" ]] || { echo "error: jail '$jail' not bootstrapped. Run 'trimorph-bootstrap $jail'" >&2; exit 1; }
 
-# Stop all OTHER active trimorph scopes
-for scope in /run/systemd/transient/trimorph-*.scope; do
-    [[ -e "$scope" ]] || continue
-    scope_name=$(basename "$scope" .scope)
-    [[ "$scope_name" == "trimorph-$jail" ]] && continue
-    echo "Stopping $scope_name..." >&2
-    systemctl stop "$scope_name" 2>/dev/null || true
-done
+# Stop all OTHER active trimorph scopes, unless in parallel mode
+if [[ "$parallel_mode" -eq 0 ]]; then
+    for scope in /run/systemd/transient/trimorph-*.scope; do
+        [[ -e "$scope" ]] || continue
+        scope_name=$(basename "$scope" .scope)
+        [[ "$scope_name" == "trimorph-$jail" ]] && continue
+        echo "Stopping $scope_name..." >&2
+        systemctl stop "$scope_name" 2>/dev/null || true
+    done
+fi
 
 # Prepare mounts (only safe, necessary paths)
 bind_mounts="--bind-ro=/tmp/.X11-unix --bind-ro=/dev/dri --bind-ro=/etc/resolv.conf"
