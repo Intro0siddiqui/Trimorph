@@ -113,6 +113,14 @@ pkgmgr_args=--root {root} --dbpath {root}/var/lib/pacman --cachedir {root}/var/c
 env=LANG=C.UTF-8,HOME=/tmp
 ```
 
+### 5.3 Expanded Support
+Trimorph also includes configurations for other popular package managers:
+-   **Fedora:** `etc/trimorph/jails.d/fedora.conf`
+-   **Alpine:** `etc/trimorph/jails.d/alpine.conf`
+-   **openSUSE:** `etc/trimorph/jails.d/opensuse.conf`
+
+To use them, simply bootstrap the desired jail (e.g., `sudo trimorph-bootstrap fedora`) and then use the corresponding wrapper (`dnf`, `apk`, `zypper`).
+
 ---
 
 ## 6. Wrappers & Integration
@@ -190,3 +198,15 @@ trimorph-status
 
 **Trimorph** delivers safe, modular, on-demand multi-distro package management on Gentoo with no compromises on host purity, security, or resource usage.
 > Install once. Run anything. One jail at a time.
+
+---
+
+## 11. Testing
+
+This project uses `bats-core` for its test suite. The tests are located in the `test/` directory.
+
+To run the tests, execute the following command from the project root:
+```bash
+./test/bats-core/bin/bats test/core.bats
+```
+A Continuous Integration (CI) workflow is also set up using GitHub Actions to automatically run the test suite on every push.

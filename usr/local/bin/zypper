@@ -1,0 +1,3 @@
+#!/bin/bash
+# Wrapper for zypper to execute within a Trimorph jail
+exec /usr/local/sbin/trimorph-solo opensuse "$@"
