@@ -1,79 +1,169 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Argument Parsing ---
+parallel_mode=0
+check_mode=0
+dry_run_mode=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --parallel) parallel_mode=1; shift ;;
+        --check) check_mode=1; shift ;;
+        --dry-run) dry_run_mode=1; shift ;;
+        *) break ;;
+    esac
+done
+
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <jail> <cmd> [args...]" >&2; exit 1
+    echo "Usage: $0 [--parallel] [--check] [--dry-run] <jail> [cmd] [args...]" >&2
+    exit 1
 fi
 
 jail="$1"; shift
 conf="/etc/trimorph/jails.d/$jail.conf"
-[[ -f "$conf" ]] || { echo "error: no config for jail '$jail'" >&2; exit 1; }
 
-# Load config safely
+# --- Validation and Config Sourcing ---
+if [[ ! -r "$conf" ]]; then
+    echo "[FAIL] Config file not found or not readable: $conf"
+    exit 1
+fi
 source <(trimorph-parse-conf "$conf")
 
-# Check initialization
-init_marker="/etc/trimorph/runtime/${jail}.initialized"
-[[ -f "$init_marker" ]] || { echo "error: jail '$jail' not bootstrapped. Run 'trimorph-bootstrap $jail'" >&2; exit 1; }
+# --- Functions ---
+run_checks() {
+    local all_ok=1
+    echo "--- Running Environment Checks for Jail: $jail ---"
 
-# Stop all OTHER active trimorph scopes
-for scope in /run/systemd/transient/trimorph-*.scope; do
-    [[ -e "$scope" ]] || continue
-    scope_name=$(basename "$scope" .scope)
-    [[ "$scope_name" == "trimorph-$jail" ]] && continue
-    echo "Stopping $scope_name..." >&2
-    systemctl stop "$scope_name" 2>/dev/null || true
-done
+    local base_root="/usr/local/trimorph/base/$jail"
+    if [[ ! -d "$base_root" ]]; then
+        echo "[FAIL] Base image is missing. Run 'sudo trimorph-bootstrap $jail'"
+        all_ok=0
+    else
+        echo "[OK] Base image found at $base_root."
+    fi
 
-# Prepare mounts (only safe, necessary paths)
-bind_mounts="--bind-ro=/tmp/.X11-unix --bind-ro=/dev/dri --bind-ro=/etc/resolv.conf"
-custom_mounts="${TRIMORPH_mounts:-}"
-if [[ -n "$custom_mounts" ]]; then
-    IFS=',' read -ra mnt <<< "$custom_mounts"
-    for d in "${mnt[@]}"; do
-        d=$(echo "$d" | xargs)
-        [[ -e "$d" ]] && bind_mounts="$bind_mounts --bind-ro=$d"
+    if ! command -v "$TRIMORPH_pkgmgr" &> /dev/null; then
+         echo "[WARN] Package manager '$TRIMORPH_pkgmgr' not found on host."
+    fi
+
+    if ! command -v systemd-nspawn &> /dev/null; then
+        echo "[FAIL] Required binary 'systemd-nspawn' not found in PATH."
+        all_ok=0
+    else
+        echo "[OK] Required binary 'systemd-nspawn' found."
+    fi
+
+    if [[ "$parallel_mode" -eq 0 ]]; then
+        local conflict_found=0
+        for scope in /run/systemd/transient/trimorph-*.scope; do
+            [[ -e "$scope" ]] || continue
+            local scope_name
+            scope_name=$(basename "$scope" .scope)
+            if [[ "$scope_name" != "trimorph-$jail" ]]; then
+                echo "[WARN] Conflicting jail is active: $scope_name"
+                conflict_found=1
+            fi
+        done
+        if [[ "$conflict_found" -eq 0 ]]; then
+            echo "[OK] No conflicting jails are active."
+        fi
+    else
+        echo "[INFO] Parallel mode is enabled, skipping conflict check."
+    fi
+
+    if [[ "$all_ok" -eq 1 ]]; then
+        echo "--- Checks Passed ---"
+        return 0
+    else
+        echo "--- One or more checks failed. ---"
+        return 1
+    fi
+}
+
+# --- Main Logic ---
+
+# If --check or --dry-run, run checks and exit if they fail.
+if [[ "$check_mode" -eq 1 || "$dry_run_mode" -eq 1 ]]; then
+    if ! run_checks; then
+        exit 1
+    fi
+    # If only --check was passed, we are done.
+    if [[ "$check_mode" -eq 1 ]]; then
+        exit 0
+    fi
+fi
+
+# --- Command Construction for Dry Run and Normal Execution ---
+base_root="/usr/local/trimorph/base/$jail"
+overlay_upper="/var/tmp/trimorph_${jail}_upper_$$"
+overlay_work="/var/tmp/trimorph_${jail}_work_$$"
+
+# Use systemd-nspawn's native overlay support. Much cleaner.
+nspawn_opts=(
+    --quiet
+    --directory="$TRIMORPH_root"
+    --overlay="${base_root}:${overlay_upper}:${overlay_work}"
+)
+
+# Add bind mounts
+bind_mounts=("--bind-ro=/tmp/.X11-unix" "--bind-ro=/dev/dri" "--bind-ro=/etc/resolv.conf")
+shared_cache_host="/var/cache/trimorph/packages"
+case "$TRIMORPH_pkgmgr" in
+    *apt) bind_mounts+=("--bind=${shared_cache_host}:/var/cache/apt/archives") ;;
+    *pacman) bind_mounts+=("--bind=${shared_cache_host}:/var/cache/pacman/pkg") ;;
+esac
+if [[ -n "${TRIMORPH_mounts:-}" ]]; then
+    IFS=',' read -ra mnt <<< "${TRIMORPH_mounts}"
+    for d in "${mnt[@]}"; do bind_mounts+=("--bind-ro=$(echo "$d" | xargs)"); done
+fi
+nspawn_opts+=("${bind_mounts[@]}")
+
+# Add environment variables
+if [[ -n "${TRIMORPH_env:-}" ]]; then
+    IFS=',' read -ra env_list <<< "${TRIMORPH_env}"
+    for e in "${env_list[@]}"; do nspawn_opts+=("--setenv=$(echo "$e" | xargs)"); done
+fi
+
+# Assemble the full systemd-run command
+full_cmd=(
+    systemd-run --scope --slice=trimorph.slice --uid="$(id -u)" --gid="$(id -g)" --pipe --wait --description="trimorph-$jail"
+    systemd-nspawn "${nspawn_opts[@]}" "$TRIMORPH_pkgmgr" $TRIMORPH_pkgmgr_args "$@"
+)
+
+# If this is a dry run, print the command and exit.
+if [[ "$dry_run_mode" -eq 1 ]]; then
+    echo "--- Dry Run: Command to be Executed ---"
+    printf "%q " "${full_cmd[@]}"
+    echo
+    exit 0
+fi
+
+# --- Normal Execution ---
+
+# Setup directories needed for overlay and cache.
+# nspawn creates the bind destination, but not the source or overlay dirs.
+sudo mkdir -p "$overlay_upper" "$overlay_work" "$shared_cache_host"
+sudo chown -R "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
+sudo chmod 777 "$shared_cache_host"
+trap 'sudo rm -rf "$overlay_upper" "$overlay_work"' EXIT
+
+if [[ "$parallel_mode" -eq 0 ]]; then
+    for scope in /run/systemd/transient/trimorph-*.scope; do
+        [[ -e "$scope" ]] || continue
+        scope_name=$(basename "$scope" .scope)
+        [[ "$scope_name" == "trimorph-$jail" ]] && continue
+        echo "Stopping $scope_name..." >&2
+        systemctl stop "$scope_name" 2>/dev/null || true
     done
 fi
 
-# Build environment
-env_vars=""
-IFS=',' read -ra env_list <<< "${TRIMORPH_env:-}"
-for e in "${env_list[@]}"; do
-    e=$(echo "$e" | xargs)
-    [[ "$e" == *=* ]] && env_vars="$env_vars --setenv=${e}"
-done
-
-# Base command
-cmd=(systemd-run \
-    --scope \
-    --slice=trimorph.slice \
-    --uid="$(id -u)" \
-    --gid="$(id -g)" \
-    --pipe \
-    --wait \
-    --description="trimorph-$jail" \
-    systemd-nspawn \
-        --quiet \
-        --directory="$TRIMORPH_root" \
-        --user="$(id -un)" \
-        $bind_mounts \
-        $env_vars \
-        "$TRIMORPH_pkgmgr" $TRIMORPH_pkgmgr_args "$@")
-
-# Launch in transient scope, with optional logging
+# Execute with optional logging
 if [[ -n "${TRIMORPH_DEBUG:-}" ]]; then
     log_file="/var/log/trimorph/${jail}.log"
-    # Securely create the log file and set its ownership to the current user.
-    # This requires sudo because /var/log/trimorph is root-owned.
     sudo touch "$log_file"
     sudo chown "$(id -u):$(id -g)" "$log_file"
-
-    echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Executing: ${TRIMORPH_pkgmgr} ${TRIMORPH_pkgmgr_args:-} $@" >> "$log_file"
-    # Execute the command, piping output to the user-owned log file.
-    # No 'exec' is used here to maintain consistent script behavior.
-    "${cmd[@]}" 2>&1 | tee -a "$log_file"
+    echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Executing command ---" >> "$log_file"
+    "${full_cmd[@]}" 2>&1 | tee -a "$log_file"
 else
-    # No 'exec' is used here to maintain consistent script behavior.
-    "${cmd[@]}"
+    "${full_cmd[@]}"
 fi

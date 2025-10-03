@@ -22,21 +22,28 @@ New distros are added via **drop-in `.conf` files**—no code changes required.
 
 ## 2. Architecture Overview
 
+Trimorph now uses a layered, caching architecture to provide fast, ephemeral, and isolated environments.
+
 ```
-/etc/trimorph/
-├── jails.d/
-│   ├── deb.conf      → defines root, pkgmgr, bootstrap, mounts
-│   └── arch.conf
-├── trimorph.slice    → resource limits (CPU, RAM)
-└── runtime/          → tmpfs (auto-created)
+/usr/local/trimorph/
+├── base/
+│   ├── deb/          → Read-only base image for Debian
+│   └── arch/         → Read-only base image for Arch
+└── deb/              → Ephemeral OverlayFS mount point for live jail
+/var/cache/trimorph/
+└── packages/         → Shared package cache for all jails
 ```
 
-**Workflow:**
-1.  User runs `apt install foo`.
-2.  The `apt` wrapper calls `trimorph-solo deb apt install foo`.
-3.  The launcher stops all other active `trimorph-*.scope` units.
-4.  It then starts a new scope with `systemd-run --scope systemd-nspawn ...`.
-5.  On command exit, the scope vanishes, leaving **zero residue**.
+### 2.1 Smart Caching Workflow
+1.  **Bootstrap:** `trimorph-bootstrap` creates a read-only base image in `/usr/local/trimorph/base/`.
+2.  **Execution:** `trimorph-solo` uses `systemd-nspawn`'s native `--overlay` support to create a temporary, writable filesystem layer on top of the read-only base.
+3.  **Launch:** The command runs inside this ephemeral overlay.
+4.  **Cleanup:** On exit, the overlay's writable layer is automatically discarded, leaving the base image untouched.
+
+This architecture provides:
+-   **Speed:** Jails start almost instantly, as there's no need to copy a root filesystem.
+-   **Efficiency:** A shared package cache (`/var/cache/trimorph/packages`) minimizes redundant downloads.
+-   **Purity:** The base images remain clean, and all changes are temporary.
 
 ---
 
@@ -124,7 +131,20 @@ An optional hook that automatically stops any active Trimorph jail before a Port
 -   `trimorph-status`: Checks and displays the status of all configured jails (active or inactive).
 -   `trimorph-cleanup`: Immediately stops all running Trimorph scopes.
 
-### 7.2 Debugging & Logging
+### 7.2 Diagnostics & Dry-Run
+Trimorph includes flags for validating your setup and simulating commands without making any changes.
+
+-   **`--check`**: Performs a series of environment checks to validate the jail's configuration, ensuring it's bootstrapped and that all required binaries are present.
+    ```bash
+    trimorph-solo --check <jail>
+    ```
+
+-   **`--dry-run`**: Simulates a command execution. It runs all the environment checks and then prints the exact `systemd-run` command that would be executed, but does not run it.
+    ```bash
+    trimorph-solo --dry-run <jail> <command>
+    ```
+
+### 7.3 Debugging & Logging
 Trimorph includes an optional logging feature to help with troubleshooting. When enabled, all output from commands executed within a jail is saved to a log file.
 
 **To enable logging:**

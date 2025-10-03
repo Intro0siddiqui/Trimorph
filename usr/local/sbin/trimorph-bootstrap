@@ -6,18 +6,30 @@ conf="/etc/trimorph/jails.d/$jail.conf"
 [[ -f "$conf" ]] || { echo "error: config not found"; exit 1; }
 
 source <(trimorph-parse-conf "$conf")
-echo "Bootstrapping $jail into ${TRIMORPH_root}..."
 
-# Ensure root and log directories exist. /var/log/trimorph remains root-owned.
-sudo mkdir -p "$TRIMORPH_root" /var/log/trimorph
+# Define the path for the read-only base image
+base_root="/usr/local/trimorph/base/$jail"
 
-# Grant user ownership of only the jail root directory
-sudo chown -R "$(id -u):$(id -g)" "$TRIMORPH_root"
+echo "Bootstrapping base image for '$jail' into ${base_root}..."
+echo "The original jail root '${TRIMORPH_root}' will be used as an OverlayFS mount point."
 
-# Run bootstrap command as root (safe: defined in config)
-sudo bash -c "${TRIMORPH_bootstrap//\{root\}/$TRIMORPH_root}"
+# Ensure directories for the base image, runtime root, and logs exist.
+sudo mkdir -p "$base_root" "$TRIMORPH_root" /var/log/trimorph
 
-# Mark as initialized
+# The runtime root needs to be user-owned for future OverlayFS mounts.
+# The base root will be created by the bootstrap command, typically as root.
+sudo chown "$(id -u):$(id -g)" "$TRIMORPH_root"
+
+# Run the bootstrap command, targeting the new base_root directory.
+echo "Running bootstrap command. This may take some time..."
+sudo bash -c "${TRIMORPH_bootstrap//\{root\}/$base_root}"
+
+# After a successful bootstrap, make the base image read-only.
+echo "Setting base image to read-only to prevent modifications."
+sudo chmod -R a-w,a+rX "$base_root"
+
+# Mark the jail as initialized and ready for use with OverlayFS.
 sudo mkdir -p /etc/trimorph/runtime
 sudo touch "/etc/trimorph/runtime/${jail}.initialized"
-echo "✅ Jail '$jail' ready."
+
+echo "✅ Base image for jail '$jail' created and ready."
