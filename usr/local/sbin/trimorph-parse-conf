@@ -1,24 +1,36 @@
 #!/bin/bash
-# Safe INI parser — NO eval, NO code injection
+# Robust, safe INI parser — NO eval, NO code injection
+
+set -euo pipefail
 
 conf="$1"
 if [[ ! -f "$conf" ]]; then
     echo "error: config not found: $conf" >&2; exit 1
 fi
 
-declare -A cfg
-while IFS='=' read -r key val; do
-    [[ $key =~ ^[[:space:]]*# ]] && continue
-    [[ -z "${key// }" ]] && continue
-    key="${key%%#*}"           # strip inline comments
-    key="${key//[[:space:]]}"  # normalize
-    val="${val##*[[:space:]]}"
-    val="${val%[[:space:]]*}"
-    [[ -z "$key" ]] && continue
-    cfg["$key"]="$val"
-done < <(grep -v '^\[' "$conf")
+# Read the file line by line, handling keys and values robustly.
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip comments and empty lines
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// }" ]] && continue
 
-# Output as shell assignments (safe for source)
-for k in "${!cfg[@]}"; do
-    printf '%s=%q\n' "TRIMORPH_$k" "${cfg[$k]}"
-done
+    # Ensure the line contains an equals sign
+    if [[ "$line" != *"="* ]]; then
+        continue
+    fi
+
+    # Extract key and value using parameter expansion for robustness
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    # Clean up whitespace from key and value using pure bash
+    key_clean="${key#"${key%%[![:space:]]*}"}"
+    key_clean="${key_clean%"${key_clean##*[![:space:]]}"}"
+    value_clean="${value#"${value%%[![:space:]]*}"}"
+    value_clean="${value_clean%"${value_clean##*[![:space:]]}"}"
+
+    # Output as shell assignments (safe for source)
+    if [[ -n "$key_clean" ]]; then
+        printf 'TRIMORPH_%s=%q\n' "$key_clean" "$value_clean"
+    fi
+done < "$conf"

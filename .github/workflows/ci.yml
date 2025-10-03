@@ -1,0 +1,15 @@
+name: Trimorph CI
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+
+      - name: Run bats tests
+        run: |
+          ./test/bats-core/bin/bats test/core.bats

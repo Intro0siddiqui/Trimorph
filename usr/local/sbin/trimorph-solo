@@ -1,6 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Self-locating Script ---
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# --- Conditional Sudo for Testing ---
+SUDO_CMD="sudo"
+if [[ "${TRIMORPH_TEST_MODE:-0}" == "1" ]]; then
+  SUDO_CMD=""
+fi
+
+# Allow overriding paths for testing, with sensible defaults
+TRIMORPH_ETC_DIR="${TRIMORPH_ETC_DIR:-/etc/trimorph}"
+TRIMORPH_BASE_DIR="${TRIMORPH_BASE_DIR:-/usr/local/trimorph/base}"
+TRIMORPH_LOG_DIR="${TRIMORPH_LOG_DIR:-/var/log/trimorph}"
+TRIMORPH_CACHE_DIR="${TRIMORPH_CACHE_DIR:-/var/cache/trimorph/packages}"
+TRIMORPH_TMP_DIR="${TRIMORPH_TMP_DIR:-/var/tmp}"
+
+
 # --- Argument Parsing ---
 parallel_mode=0
 check_mode=0
@@ -20,21 +37,21 @@ if [[ $# -lt 1 ]]; then
 fi
 
 jail="$1"; shift
-conf="/etc/trimorph/jails.d/$jail.conf"
+conf="${TRIMORPH_ETC_DIR}/jails.d/$jail.conf"
 
 # --- Validation and Config Sourcing ---
 if [[ ! -r "$conf" ]]; then
     echo "[FAIL] Config file not found or not readable: $conf"
     exit 1
 fi
-source <(trimorph-parse-conf "$conf")
+source <($SCRIPT_DIR/trimorph-parse-conf "$conf")
 
 # --- Functions ---
 run_checks() {
     local all_ok=1
     echo "--- Running Environment Checks for Jail: $jail ---"
 
-    local base_root="/usr/local/trimorph/base/$jail"
+    local base_root="${TRIMORPH_BASE_DIR}/$jail"
     if [[ ! -d "$base_root" ]]; then
         echo "[FAIL] Base image is missing. Run 'sudo trimorph-bootstrap $jail'"
         all_ok=0
@@ -94,11 +111,11 @@ if [[ "$check_mode" -eq 1 || "$dry_run_mode" -eq 1 ]]; then
 fi
 
 # --- Command Construction for Dry Run and Normal Execution ---
-base_root="/usr/local/trimorph/base/$jail"
-overlay_upper="/var/tmp/trimorph_${jail}_upper_$$"
-overlay_work="/var/tmp/trimorph_${jail}_work_$$"
+base_root="${TRIMORPH_BASE_DIR}/$jail"
+overlay_upper="${TRIMORPH_TMP_DIR}/trimorph_${jail}_upper_$$"
+overlay_work="${TRIMORPH_TMP_DIR}/trimorph_${jail}_work_$$"
 
-# Use systemd-nspawn's native overlay support. Much cleaner.
+# Use systemd-nspawn's native overlay support.
 nspawn_opts=(
     --quiet
     --directory="$TRIMORPH_root"
@@ -107,10 +124,9 @@ nspawn_opts=(
 
 # Add bind mounts
 bind_mounts=("--bind-ro=/tmp/.X11-unix" "--bind-ro=/dev/dri" "--bind-ro=/etc/resolv.conf")
-shared_cache_host="/var/cache/trimorph/packages"
 case "$TRIMORPH_pkgmgr" in
-    *apt) bind_mounts+=("--bind=${shared_cache_host}:/var/cache/apt/archives") ;;
-    *pacman) bind_mounts+=("--bind=${shared_cache_host}:/var/cache/pacman/pkg") ;;
+    *apt) bind_mounts+=("--bind=${TRIMORPH_CACHE_DIR}:/var/cache/apt/archives") ;;
+    *pacman) bind_mounts+=("--bind=${TRIMORPH_CACHE_DIR}:/var/cache/pacman/pkg") ;;
 esac
 if [[ -n "${TRIMORPH_mounts:-}" ]]; then
     IFS=',' read -ra mnt <<< "${TRIMORPH_mounts}"
@@ -141,11 +157,10 @@ fi
 # --- Normal Execution ---
 
 # Setup directories needed for overlay and cache.
-# nspawn creates the bind destination, but not the source or overlay dirs.
-sudo mkdir -p "$overlay_upper" "$overlay_work" "$shared_cache_host"
-sudo chown -R "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
-sudo chmod 777 "$shared_cache_host"
-trap 'sudo rm -rf "$overlay_upper" "$overlay_work"' EXIT
+$SUDO_CMD mkdir -p "$overlay_upper" "$overlay_work" "$TRIMORPH_CACHE_DIR"
+$SUDO_CMD chown -R "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
+$SUDO_CMD chmod 777 "$TRIMORPH_CACHE_DIR"
+trap '$SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"' EXIT
 
 if [[ "$parallel_mode" -eq 0 ]]; then
     for scope in /run/systemd/transient/trimorph-*.scope; do
@@ -159,9 +174,9 @@ fi
 
 # Execute with optional logging
 if [[ -n "${TRIMORPH_DEBUG:-}" ]]; then
-    log_file="/var/log/trimorph/${jail}.log"
-    sudo touch "$log_file"
-    sudo chown "$(id -u):$(id -g)" "$log_file"
+    log_file="${TRIMORPH_LOG_DIR}/${jail}.log"
+    $SUDO_CMD touch "$log_file"
+    $SUDO_CMD chown "$(id -u):$(id -g)" "$log_file"
     echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Executing command ---" >> "$log_file"
     "${full_cmd[@]}" 2>&1 | tee -a "$log_file"
 else
