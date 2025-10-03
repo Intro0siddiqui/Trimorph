@@ -6,10 +6,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout with submodules
+        uses: actions/checkout@v3
         with:
           submodules: 'recursive'
 
-      - name: Run bats tests
+      - name: Install system dependencies
         run: |
-          ./test/bats-core/bin/bats test/core.bats
+          sudo apt-get update
+          sudo apt-get install -y curl sudo
+
+      - name: Make scripts executable
+        run: chmod +x ./usr/local/sbin/*
+
+      - name: Run bats tests
+        run: ./test/bats-core/bin/bats test/core.bats
