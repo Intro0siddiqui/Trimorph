@@ -34,8 +34,10 @@ struct App {
     cpu_usage: u16,
     mem_usage: u16,
     show_popup: bool,
+    show_help: bool,
     popup_title: String,
     popup_content: String,
+    parallel_mode: bool,
 }
 
 impl App {
@@ -59,8 +61,10 @@ impl App {
             cpu_usage: 0,
             mem_usage: 0,
             show_popup: false,
+            show_help: false,
             popup_title: String::new(),
             popup_content: String::new(),
+            parallel_mode: false,
         };
         if !app.jails.is_empty() {
             app.jail_list_state.select(Some(0));
@@ -116,7 +120,12 @@ impl App {
         if let Some(selected) = self.jail_list_state.selected() {
             let jail_name = self.jails[selected].clone();
             self.popup_title = format!("Check: {}", jail_name);
-            let output = Command::new("trimorph-solo").arg("--check").arg(&jail_name).output().await;
+            let mut cmd = Command::new("trimorph-solo");
+            if self.parallel_mode {
+                cmd.arg("--parallel");
+            }
+            cmd.arg("--check").arg(&jail_name);
+            let output = cmd.output().await;
             match output {
                 Ok(output) => {
                     self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
@@ -133,7 +142,12 @@ impl App {
         if let Some(selected) = self.jail_list_state.selected() {
             let jail_name = self.jails[selected].clone();
             self.popup_title = format!("Dry Run: {}", jail_name);
-            let output = Command::new("trimorph-solo").arg("--dry-run").arg(&jail_name).arg("echo").arg("test").output().await;
+            let mut cmd = Command::new("trimorph-solo");
+            if self.parallel_mode {
+                cmd.arg("--parallel");
+            }
+            cmd.arg("--dry-run").arg(&jail_name).arg("echo").arg("test");
+            let output = cmd.output().await;
             match output {
                 Ok(output) => {
                     self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
@@ -144,6 +158,105 @@ impl App {
             }
             self.show_popup = true;
         }
+    }
+
+    async fn run_install_to_host(&mut self) {
+        if let Some(selected) = self.jail_list_state.selected() {
+            let jail_name = self.jails[selected].clone();
+            self.popup_title = format!("Install to Host: {}", jail_name);
+            // Note: trimorph-install-to-host doesn't support parallel mode directly
+            let output = Command::new("trimorph-install-to-host").arg(&jail_name).arg("echo").arg("test").output().await;
+            match output {
+                Ok(output) => {
+                    self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+                }
+                Err(e) => {
+                    self.popup_content = format!("Error executing command: {}", e);
+                }
+            }
+            self.show_popup = true;
+        }
+    }
+
+    async fn run_update_check(&mut self) {
+        self.popup_title = "Update Check".to_string();
+        let output = Command::new("trimorph-update-check").output().await;
+        match output {
+            Ok(output) => {
+                self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+            }
+            Err(e) => {
+                self.popup_content = format!("Error executing command: {}", e);
+            }
+        }
+        self.show_popup = true;
+    }
+
+    async fn run_status(&mut self) {
+        self.popup_title = "Status".to_string();
+        let output = Command::new("trimorph-status").output().await;
+        match output {
+            Ok(output) => {
+                self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+            }
+            Err(e) => {
+                self.popup_content = format!("Error executing command: {}", e);
+            }
+        }
+        self.show_popup = true;
+    }
+
+    async fn run_config_get(&mut self) {
+        self.popup_title = "Configuration".to_string();
+        let output = Command::new("trimorph-config").arg("get").output().await;
+        match output {
+            Ok(output) => {
+                self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+            }
+            Err(e) => {
+                self.popup_content = format!("Error executing command: {}", e);
+            }
+        }
+        self.show_popup = true;
+    }
+
+    async fn run_cleanup(&mut self) {
+        self.popup_title = "Cleanup".to_string();
+        let output = Command::new("trimorph-cleanup").output().await;
+        match output {
+            Ok(output) => {
+                self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+            }
+            Err(e) => {
+                self.popup_content = format!("Error executing command: {}", e);
+            }
+        }
+        self.show_popup = true;
+    }
+
+    async fn run_export(&mut self) {
+        if let Some(selected) = self.jail_list_state.selected() {
+            let jail_name = self.jails[selected].clone();
+            self.popup_title = format!("Export: {}", jail_name);
+            let output = Command::new("trimorph-export").arg(&jail_name).arg("--help").output().await;  // Using --help to test the command
+            match output {
+                Ok(output) => {
+                    self.popup_content = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr).to_string();
+                }
+                Err(e) => {
+                    self.popup_content = format!("Error executing command: {}", e);
+                }
+            }
+            self.show_popup = true;
+        }
+    }
+
+    fn toggle_parallel_mode(&mut self) {
+        self.parallel_mode = !self.parallel_mode;
+    }
+    
+    fn show_help_info(&mut self) {
+        self.show_help = true;
     }
 }
 
@@ -271,6 +384,30 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App, config: 
                         KeyCode::Char('d') => {
                             app.run_dry_run().await;
                         }
+                        KeyCode::Char('i') => {
+                            app.run_install_to_host().await;
+                        }
+                        KeyCode::Char('u') => {
+                            app.run_update_check().await;
+                        }
+                        KeyCode::Char('s') => {
+                            app.run_status().await;
+                        }
+                        KeyCode::Char('g') => {
+                            app.run_config_get().await;
+                        }
+                        KeyCode::Char('e') => {
+                            app.run_cleanup().await;
+                        }
+                        KeyCode::Char('x') => {
+                            app.run_export().await;
+                        }
+                        KeyCode::Char('p') => {
+                            app.toggle_parallel_mode();
+                        }
+                        KeyCode::Char('h') => {
+                            app.show_help_info();
+                        }
                         _ => {}
                     }
                 }
@@ -319,7 +456,7 @@ fn ui(f: &mut Frame, app: &mut App, config: &Config) {
     let log_text = app.log_lines.join("");
     f.render_widget(LogView::new("Logs", &log_text), main_chunks[1]);
 
-    f.render_widget(StatusBar::new("Press 'q' to quit, 'Up'/'Down' to navigate, 'c' for check, 'd' for dry-run.")
+    f.render_widget(StatusBar::new("Press 'q' to quit, 'Up'/'Down' to navigate, 'c' for check, 'd' for dry-run, 'i' for install to host, 'u' for update check, 's' for status, 'g' for config, 'e' for cleanup, 'x' for export.")
         .style(Style::default().fg(config.theme.main_fg.0).bg(config.theme.main_bg.0)), chunks[2]);
 
     if app.show_popup {

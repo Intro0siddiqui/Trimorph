@@ -103,12 +103,12 @@ $SUDO_CMD chown "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
 # Validate base and runtime directories exist before proceeding
 if [[ ! -d "$base_root" ]]; then
     echo "[FAIL] Base image is missing. Run 'sudo trimorph-bootstrap $jail'" >&2
-    sudo rm -rf "$overlay_upper" "$overlay_work"
+    $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
     exit 1
 fi
 if [[ ! -d "${TRIMORPH_root:-}" ]]; then
     echo "[FAIL] Runtime root does not exist: ${TRIMORPH_root:-unset}" >&2
-    sudo rm -rf "$overlay_upper" "$overlay_work"
+    $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
     exit 1
 fi
 
@@ -126,7 +126,7 @@ case "$TRIMORPH_pkgmgr" in
             --setenv=DEBIAN_FRONTEND=noninteractive \
             $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args update; then
             echo "Error updating package lists"
-            sudo rm -rf "$overlay_upper" "$overlay_work"
+            $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
             exit 1
         fi
         
@@ -140,7 +140,7 @@ case "$TRIMORPH_pkgmgr" in
             --setenv=DEBIAN_FRONTEND=noninteractive \
             $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args show "$package" >/dev/null 2>&1; then
             echo "Package '$package' not found in $jail repository"
-            sudo rm -rf "$overlay_upper" "$overlay_work"
+            $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
             exit 1
         fi
         
@@ -169,7 +169,7 @@ case "$TRIMORPH_pkgmgr" in
             --setenv=LANG=C.UTF-8 \
             $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Si "$package" >/dev/null 2>&1; then
             echo "Package '$package' not found in $jail repository"
-            sudo rm -rf "$overlay_upper" "$overlay_work"
+            $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
             exit 1
         fi
         
@@ -197,7 +197,7 @@ case "$TRIMORPH_pkgmgr" in
             --bind=/dev/dri \
             $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Si "$package" >/dev/null 2>&1; then
             echo "Package '$package' not found in $jail repository"
-            sudo rm -rf "$overlay_upper" "$overlay_work"
+            $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
             exit 1
         fi
         
@@ -253,47 +253,3 @@ echo "✓ Validation passed"
 
 # Clean up
 $SUDO_CMD rm -rf "$overlay_upper" "$overlay_work"
-            --bind=/tmp/.X11-unix \
-            --bind=/dev/dri \
-            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args search -v "$package" >/dev/null 2>&1; then
-            echo "Package '$package' not found in $jail repository"
-            sudo rm -rf "$overlay_upper" "$overlay_work"
-            exit 1
-        fi
-        
-        # Show dependency information
-        echo "Package info and dependencies:"
-        sudo systemd-nspawn \
-            --quiet \
-            --directory="$TRIMORPH_root" \
-        # Validate that TRIMORPH_root and base_root exist (fail early with clear error)
-        if [[ ! -d "$base_root" ]]; then
-            echo "[FAIL] Base image is missing. Run 'sudo trimorph-bootstrap $jail'" >&2
-            sudo rm -rf "$overlay_upper" "$overlay_work"
-            exit 1
-        fi
-        if [[ ! -d "$TRIMORPH_root" ]]; then
-            echo "[FAIL] Runtime root does not exist: $TRIMORPH_root" >&2
-            sudo rm -rf "$overlay_upper" "$overlay_work"
-            exit 1
-        fi
-            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
-            --bind-ro=/etc/resolv.conf \
-            --bind=/tmp/.X11-unix \
-            --bind=/dev/dri \
-            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args info -e "$package" 2>/dev/null || \
-            echo "  (no dependency info available)"
-        ;;
-    *)
-        echo "Unsupported package manager: $TRIMORPH_pkgmgr"
-        sudo rm -rf "$overlay_upper" "$overlay_work"
-        exit 1
-        ;;
-esac
-
-# If we get here, the package exists in the repository
-echo "✓ Package '$package' exists in jail '$jail'"
-echo "✓ Validation passed"
-
-# Clean up
-sudo rm -rf "$overlay_upper" "$overlay_work"
