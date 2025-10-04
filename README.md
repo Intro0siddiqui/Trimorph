@@ -152,7 +152,43 @@ Trimorph includes flags for validating your setup and simulating commands withou
     trimorph-solo --dry-run <jail> <command>
     ```
 
-### 7.3 Debugging & Logging
+### 7.3 Terminal UI (TUI)
+
+Trimorph includes a terminal-based user interface for a real-time view of your jails.
+
+      ▲
+     ▲ ▲   Trimorph
+
+**To build and run:**
+```bash
+# Navigate to the TUI directory
+cd tui
+
+# Build the TUI (requires Rust)
+cargo build --release
+
+# Run the TUI
+./target/release/trimorph-tui
+```
+
+**Features:**
+-   **Live Jail Status**: See which jails are active.
+-   **Log Viewer**: Tail logs for any jail in real-time.
+-   **Resource Monitoring**: View CPU and Memory usage for active jails.
+-   **Diagnostics**: Run `--check` and `--dry-run` on jails directly from the TUI using the 'c' and 'd' keys.
+-   **Customizable**: Create a `tui.toml` file in `~/.config/trimorph/` to set custom color themes.
+
+**Global Installation:**
+To make the `trimorph-tui` and other `trimorph` commands accessible from any directory, you can create symbolic links to `/usr/local/bin`:
+```bash
+sudo ln -s /path/to/your/project/usr/local/sbin/trimorph-bootstrap /usr/local/bin/trimorph-bootstrap
+sudo ln -s /path/to/your/project/usr/local/sbin/trimorph-parse-conf /usr/local/bin/trimorph-parse-conf
+sudo ln -s /path/to/your/project/usr/local/sbin/trimorph-solo /usr/local/bin/trimorph-solo
+sudo ln -s /path/to/your/project/tui/target/release/trimorph-tui /usr/local/bin/trimorph-tui
+```
+Remember to replace `/path/to/your/project` with the actual path to the Trimorph project directory.
+
+### 7.4 Debugging & Logging
 Trimorph includes an optional logging feature to help with troubleshooting. When enabled, all output from commands executed within a jail is saved to a log file.
 
 **To enable logging:**
@@ -212,7 +248,7 @@ trimorph-status
 
 ---
 
-## 11. Testing
+## 12. Testing
 
 This project uses `bats-core` for its test suite. The tests are located in the `test/` directory.
 

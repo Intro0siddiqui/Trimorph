@@ -6,13 +6,11 @@ use std::process::Command;
 enum InitSystem {
     Systemd,
     OpenRC,
-    Unknown,
 }
 
 /// Represents a jail configuration
 #[derive(Debug)]
 struct JailConfig {
-    name: String,
     root: String,
     pkgmgr: String,
     pkgmgr_args: String,
@@ -48,7 +46,6 @@ impl JailRunner {
         match self.init_system {
             InitSystem::Systemd => self.run_with_systemd_nspawn(jail_name, command),
             InitSystem::OpenRC => self.run_with_bubblewrap(jail_name, command),
-            InitSystem::Unknown => Err("Unknown init system".to_string()),
         }
     }
 
@@ -196,7 +193,6 @@ impl JailRunner {
         // you would want a more robust INI file parser
         match std::fs::read_to_string(&config_path) {
             Ok(content) => {
-                let mut name = jail_name.to_string();
                 let mut root = String::new();
                 let mut pkgmgr = String::new();
                 let mut pkgmgr_args = String::new();
@@ -212,7 +208,6 @@ impl JailRunner {
                     let value = parts[1].trim();
 
                     match key {
-                        "name" => name = value.to_string(),
                         "root" => root = value.to_string(),
                         "pkgmgr" => pkgmgr = value.to_string(),
                         "pkgmgr_args" => pkgmgr_args = value.to_string(),
@@ -231,7 +226,6 @@ impl JailRunner {
                 }
 
                 Some(JailConfig {
-                    name,
                     root,
                     pkgmgr,
                     pkgmgr_args,
@@ -282,6 +276,6 @@ mod tests {
     fn test_detect_init_system() {
         let init_system = JailRunner::detect_init_system();
         // Test will pass if the function doesn't panic
-        assert!(init_system == InitSystem::Systemd || init_system == InitSystem::OpenRC || init_system == InitSystem::Unknown);
+        assert!(init_system == InitSystem::Systemd || init_system == InitSystem::OpenRC);
     }
 }

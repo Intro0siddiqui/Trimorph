@@ -1,0 +1,34 @@
+[package]
+name = "trimorph-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.26.1"
+crossterm = "0.27.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8.10"
+thiserror = "1.0"
+anyhow = "1.0"
+glob = "0.3.1"
+strip-ansi-escapes = "0.2.0"
+bytesize = "1.3"
+tui-logger = "0.10.0"
+log = "0.4"
+chrono = "0.4"
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+async-trait = "0.1"
+nix = { version = "0.28.0", features = ["fs", "mount"] }
+tempfile = "3.10.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+signal-hook = "0.3"
+signal-hook-tokio = "0.3"
+toml_edit = "0.22.10"
+dirs = "5.0.1"
+shlex = "1.3.0"
+clap = { version = "4.5.1", features = ["derive"] }
+regex = "1.10.3"
