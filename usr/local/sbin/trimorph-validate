@@ -1,0 +1,223 @@
+#!/bin/bash
+set -euo pipefail
+
+# Check for required dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for required commands
+    for cmd in sudo systemd-nspawn mktemp; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_deps+=("$cmd")
+        fi
+    done
+    
+    # Check for required trimorph scripts
+    local script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+    for script in trimorph-parse-conf; do
+        if [[ ! -x "$script_dir/$script" ]]; then
+            missing_deps+=("$script_dir/$script")
+        fi
+    done
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo "Error: Missing required dependencies:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        exit 1
+    fi
+}
+
+check_dependencies
+
+# --- Self-locating Script ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# Allow overriding paths for testing, with sensible defaults
+TRIMORPH_ETC_DIR="${TRIMORPH_ETC_DIR:-/etc/trimorph}"
+TRIMORPH_BASE_DIR="${TRIMORPH_BASE_DIR:-/usr/local/trimorph/base}"
+TRIMORPH_CACHE_DIR="${TRIMORPH_CACHE_DIR:-/var/cache/trimorph/packages}"
+TRIMORPH_EXPORT_DIR="${TRIMORPH_EXPORT_DIR:-/var/cache/trimorph/export}"
+
+# Check required arguments
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 <jail> <package>"
+    exit 1
+fi
+
+jail="$1"
+package="$2"
+
+# Ensure configuration directory exists
+config_dir="${TRIMORPH_ETC_DIR}/jails.d"
+if [[ ! -d "$config_dir" ]]; then
+    echo "Error: Configuration directory does not exist: $config_dir"
+    echo "Please create the directory and add jail configuration files"
+    exit 1
+fi
+
+conf="${TRIMORPH_ETC_DIR}/jails.d/$jail.conf"
+if [[ ! -r "$conf" ]]; then
+    echo "[FAIL] Config file not found or not readable: $conf"
+    exit 1
+fi
+
+# Source configuration
+source <($SCRIPT_DIR/trimorph-parse-conf "$conf")
+
+echo "Validating package '$package' from jail '$jail'..."
+
+# Create temporary overlay to inspect the package
+work_dir=$(mktemp -d "/tmp/trimorph_validate_${jail}_XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+
+base_root="${TRIMORPH_BASE_DIR}/$jail"
+overlay_upper="${TRIMORPH_CACHE_DIR}/tmp_${jail}_validate_$$"
+overlay_work="${TRIMORPH_CACHE_DIR}/tmp_${jail}_work_$$"
+
+# Create the overlay directories
+sudo mkdir -p "$overlay_upper" "$overlay_work"
+sudo chown "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
+
+# Check if the package exists in the repository and get dependency info
+case "$TRIMORPH_pkgmgr" in
+    *apt)
+        echo "Checking package with apt..."
+        if ! sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=DEBIAN_FRONTEND=noninteractive \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args update; then
+            echo "Error updating package lists"
+            sudo rm -rf "$overlay_upper" "$overlay_work"
+            exit 1
+        fi
+        
+        if ! sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=DEBIAN_FRONTEND=noninteractive \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args show "$package" >/dev/null 2>&1; then
+            echo "Package '$package' not found in $jail repository"
+            sudo rm -rf "$overlay_upper" "$overlay_work"
+            exit 1
+        fi
+        
+        # Show dependency information
+        echo "Package info and dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=DEBIAN_FRONTEND=noninteractive \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args depends "$package" 2>/dev/null || \
+            echo "  (no dependency info available)"
+        ;;
+    *pacman)
+        echo "Checking package with pacman..."
+        if ! sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=LANG=C.UTF-8 \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Si "$package" >/dev/null 2>&1; then
+            echo "Package '$package' not found in $jail repository"
+            sudo rm -rf "$overlay_upper" "$overlay_work"
+            exit 1
+        fi
+        
+        # Show dependency information
+        echo "Package info and dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=LANG=C.UTF-8 \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Si "$package" 2>/dev/null | grep -E "(Depends On|Optional Deps|Required By|Optional For)" || \
+            echo "  (no dependency info available)"
+        ;;
+    *xbps)
+        echo "Checking package with xbps..."
+        if ! sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Si "$package" >/dev/null 2>&1; then
+            echo "Package '$package' not found in $jail repository"
+            sudo rm -rf "$overlay_upper" "$overlay_work"
+            exit 1
+        fi
+        
+        # Show dependency information
+        echo "Package info and dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -x "$package" 2>/dev/null || \
+            echo "  (no dependency info available)"
+        ;;
+    *apk)
+        echo "Checking package with apk..."
+        if ! sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args search -v "$package" >/dev/null 2>&1; then
+            echo "Package '$package' not found in $jail repository"
+            sudo rm -rf "$overlay_upper" "$overlay_work"
+            exit 1
+        fi
+        
+        # Show dependency information
+        echo "Package info and dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args info -e "$package" 2>/dev/null || \
+            echo "  (no dependency info available)"
+        ;;
+    *)
+        echo "Unsupported package manager: $TRIMORPH_pkgmgr"
+        sudo rm -rf "$overlay_upper" "$overlay_work"
+        exit 1
+        ;;
+esac
+
+# If we get here, the package exists in the repository
+echo "✓ Package '$package' exists in jail '$jail'"
+echo "✓ Validation passed"
+
+# Clean up
+sudo rm -rf "$overlay_upper" "$overlay_work"

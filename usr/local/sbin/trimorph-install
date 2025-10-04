@@ -1,0 +1,317 @@
+#!/bin/bash
+set -euo pipefail
+
+# Check for required dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for required commands
+    for cmd in sudo systemd-nspawn mktemp find; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_deps+=("$cmd")
+        fi
+    done
+    
+    # Check for required trimorph scripts
+    local script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+    for script in trimorph-parse-conf trimorph-db trimorph-auto-update; do
+        if [[ ! -x "$script_dir/../bin/$script" ]]; then
+            # Check alternative location
+            if [[ ! -x "/usr/local/bin/$script" ]]; then
+                missing_deps+=("/usr/local/bin/$script")
+            fi
+        fi
+    done
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo "Error: Missing required dependencies:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        exit 1
+    fi
+}
+
+check_dependencies
+
+# --- Self-locating Script ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# Allow overriding paths for testing, with sensible defaults
+TRIMORPH_ETC_DIR="${TRIMORPH_ETC_DIR:-/etc/trimorph}"
+TRIMORPH_BASE_DIR="${TRIMORPH_BASE_DIR:-/usr/local/trimorph/base}"
+TRIMORPH_CACHE_DIR="${TRIMORPH_CACHE_DIR:-/var/cache/trimorph/packages}"
+TRIMORPH_EXPORT_DIR="${TRIMORPH_EXPORT_DIR:-/var/cache/trimorph/export}"
+
+# Check required arguments
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 <jail> <package> [package...]"
+    exit 1
+fi
+
+jail="$1"; shift
+
+# Ensure configuration directory exists
+config_dir="${TRIMORPH_ETC_DIR}/jails.d"
+if [[ ! -d "$config_dir" ]]; then
+    echo "Error: Configuration directory does not exist: $config_dir"
+    echo "Please create the directory and add jail configuration files"
+    exit 1
+fi
+
+conf="${TRIMORPH_ETC_DIR}/jails.d/$jail.conf"
+if [[ ! -r "$conf" ]]; then
+    echo "[FAIL] Config file not found or not readable: $conf"
+    exit 1
+fi
+
+# Source configuration
+source <($SCRIPT_DIR/trimorph-parse-conf "$conf")
+
+# Create temporary work directory for the jail
+work_dir=$(mktemp -d "/tmp/trimorph_extract_${jail}_XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+
+echo "Preparing to extract packages with dependencies from jail: $jail"
+
+# Create overlay to install packages temporarily
+base_root="${TRIMORPH_BASE_DIR}/$jail"
+overlay_upper="${TRIMORPH_CACHE_DIR}/tmp_${jail}_install_$$"
+overlay_work="${TRIMORPH_CACHE_DIR}/tmp_${jail}_work_$$"
+
+# Create the overlay directories
+sudo mkdir -p "$overlay_upper" "$overlay_work"
+sudo chown "$(id -u):$(id -g)" "$overlay_upper" "$overlay_work"
+
+# Determine package manager and install packages in the overlay with dependencies
+case "$TRIMORPH_pkgmgr" in
+    *apt)
+        echo "Installing packages with apt (including dependencies)..."
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=DEBIAN_FRONTEND=noninteractive \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args update
+        
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=DEBIAN_FRONTEND=noninteractive \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args install -y "$@"
+        ;;
+    *pacman)
+        echo "Installing packages with pacman (including dependencies)..."
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            --setenv=LANG=C.UTF-8 \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Sy "$@"
+        ;;
+    *xbps)
+        echo "Installing packages with xbps (including dependencies)..."
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args -Sy "$@"
+        ;;
+    *apk)
+        echo "Installing packages with apk (including dependencies)..."
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$TRIMORPH_root" \
+            --overlay="${base_root}:${overlay_upper}:${overlay_work}" \
+            --bind-ro=/etc/resolv.conf \
+            --bind=/tmp/.X11-unix \
+            --bind=/dev/dri \
+            $TRIMORPH_pkgmgr $TRIMORPH_pkgmgr_args add "$@"
+        ;;
+    *)
+        echo "Unsupported package manager: $TRIMORPH_pkgmgr"
+        sudo rm -rf "$overlay_upper" "$overlay_work"
+        exit 1
+        ;;
+esac
+
+echo "Packages and dependencies installed, extracting files..."
+
+# Copy the overlay upper directory to work area
+sudo cp -r "$overlay_upper"/* "$work_dir/"
+
+# Clean up overlay directories
+sudo rm -rf "$overlay_upper" "$overlay_work"
+
+# Create export directory
+export_dir="$TRIMORPH_EXPORT_DIR/$jail"
+sudo mkdir -p "$export_dir"
+
+# Analyze what was installed and create manifest
+echo "Analyzing installed files (including dependencies)..."
+find "$work_dir" -type f -exec echo {} \\; | sed "s|$work_dir||" | sort > "$work_dir/manifest.txt"
+
+# Show what would be installed
+echo "Files to be extracted (including dependencies):"
+cat "$work_dir/manifest.txt"
+
+# Show dependency information
+echo
+echo "Dependency information:"
+case "$TRIMORPH_pkgmgr" in
+    *apt)
+        echo "Dependency information (not available in this mode)"
+        ;;
+    *pacman)
+        echo "Installed packages and their dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$work_dir" \
+            --bind-ro=/etc/resolv.conf \
+            pacman -Q --config /dev/null 2>/dev/null | head -10
+        ;;
+    *xbps)
+        echo "Installed packages and their dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$work_dir" \
+            --bind-ro=/etc/resolv.conf \
+            xbps-query -l 2>/dev/null | head -10
+        ;;
+    *apk)
+        echo "Installed packages and their dependencies:"
+        sudo systemd-nspawn \
+            --quiet \
+            --directory="$work_dir" \
+            --bind-ro=/etc/resolv.conf \
+            apk info 2>/dev/null | head -10
+        ;;
+esac
+
+# Ask for confirmation before installing to host
+echo
+echo "WARNING: This installation includes dependencies which may affect system stability."
+read -p "Do you want to install these files to the host system? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Installation cancelled."
+    exit 0
+fi
+
+# Create installation manifest file
+install_timestamp=$(date +%s)
+install_log="/var/lib/trimorph/host-installs/${jail}_${install_timestamp}.log"
+sudo mkdir -p /var/lib/trimorph/host-installs
+sudo chown "$(id -u):$(id -g)" /var/lib/trimorph/host-installs 2>/dev/null || true
+
+# Write initial log information
+{
+    echo "# Installation log for packages: $*"
+    echo "# From jail: $jail"
+    echo "# Timestamp: $install_timestamp"
+    echo "# Date: $(date)"
+    echo "# Files installed (including dependencies):"
+} | sudo tee "$install_log" > /dev/null
+
+# Install files to host with conflict checking
+echo "Installing files to host system..."
+installed_files=()
+while IFS= read -r file_path; do
+    if [[ -n "$file_path" ]]; then
+        full_source_path="$work_dir$file_path"
+        full_dest_path="$file_path"
+        
+        # Check if destination already exists
+        if [[ -e "$full_dest_path" ]]; then
+            echo "CONFLICT: $full_dest_path already exists. Skipping..."
+            continue
+        fi
+        
+        # Create parent directory if it doesn't exist
+        dest_dir=$(dirname "$full_dest_path")
+        sudo mkdir -p "$dest_dir"
+        
+        # Copy the file preserving permissions
+        sudo cp -a "$full_source_path" "$full_dest_path"
+        echo "Installed: $full_dest_path"
+        installed_files+=("$full_dest_path")
+        
+        # Log the installed file
+        echo "$full_dest_path" | sudo tee -a "$install_log" >> /dev/null
+    fi
+done < "$work_dir/manifest.txt"
+
+# Add installed packages to the database
+echo "Updating dependency tracking database..."
+for package in "$@"; do
+    # Create simple JSON array for files
+    files_json="["
+    first=true
+    for file in "${installed_files[@]}"; do
+        if [ "$first" = true ]; then
+            files_json="$files_json\\\"$file\\\""
+            first=false
+        else
+            files_json="$files_json, \\\"$file\\\""
+        fi
+    done
+    files_json="$files_json]"
+    
+    # Get version if possible
+    case "$TRIMORPH_pkgmgr" in
+        *apt)
+            version=$(sudo systemd-nspawn \
+                --quiet \
+                --directory="$work_dir" \
+                --bind-ro=/etc/resolv.conf \
+                dpkg-query -W -f='${Version}' "$package" 2>/dev/null || echo "unknown")
+            ;;
+        *pacman)
+            version=$(sudo systemd-nspawn \
+                --quiet \
+                --directory="$work_dir" \
+                --bind-ro=/etc/resolv.conf \
+                pacman -Q "$package" 2>/dev/null | cut -d' ' -f2 || echo "unknown")
+            ;;
+        *xbps)
+            version=$(sudo systemd-nspawn \
+                --quiet \
+                --directory="$work_dir" \
+                --bind-ro=/etc/resolv.conf \
+                xbps-query "$package" 2>/dev/null | grep -E '^pkgver:' | cut -d' ' -f2- || echo "unknown")
+            ;;
+        *apk)
+            version=$(sudo systemd-nspawn \
+                --quiet \
+                --directory="$work_dir" \
+                --bind-ro=/etc/resolv.conf \
+                apk info "$package" -v 2>/dev/null | head -1 || echo "unknown")
+            ;;
+    esac
+    
+    # Add to database
+    /usr/local/bin/trimorph-db add-package "$package" "$version" "$jail" "$install_log" "$files_json"
+done
+
+echo
+echo "Installation completed!"
+echo "Files installed from jail '$jail': $* (includes dependencies)"
+echo "Installation log: $install_log"
+echo "To uninstall, run: trimorph-uninstall-from-host $install_log"
+
+# Check for updates to ensure dependencies are current
+echo "Checking for updates to installed packages and dependencies..."
+/usr/local/bin/trimorph-auto-update

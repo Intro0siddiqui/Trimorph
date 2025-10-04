@@ -1,0 +1,118 @@
+#!/bin/bash
+set -euo pipefail
+
+# Configuration management for Trimorph
+
+CONFIG_FILE="/etc/trimorph/trimorph.conf"
+CONFIG_DIR="/etc/trimorph"
+
+# Create config directory if it doesn't exist
+sudo mkdir -p "$CONFIG_DIR"
+
+# Default settings
+DEFAULT_AUTO_UPDATE="false"
+DEFAULT_CHECK_UPDATES="true"
+DEFAULT_UPDATE_SECURITY_ONLY="false"
+
+# Function to get current config value
+get_config() {
+    local key="$1"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local value
+        value=$(grep "^${key}=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+    
+    # Return default value if not set
+    case "$key" in
+        auto_update) echo "$DEFAULT_AUTO_UPDATE" ;;
+        check_updates) echo "$DEFAULT_CHECK_UPDATES" ;;
+        update_security_only) echo "$DEFAULT_UPDATE_SECURITY_ONLY" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+# Function to set config value
+set_config() {
+    local key="$1"
+    local value="$2"
+    
+    # Validate the key
+    case "$key" in
+        auto_update|check_updates|update_security_only)
+            # Valid keys
+            ;;
+        *)
+            echo "Error: Invalid configuration key: $key"
+            echo "Valid keys are: auto_update, check_updates, update_security_only"
+            exit 1
+            ;;
+    esac
+    
+    # Validate the value (should be true or false)
+    if [[ "$value" != "true" && "$value" != "false" ]]; then
+        echo "Error: Invalid value: $value"
+        echo "Valid values are: true, false"
+        exit 1
+    fi
+    
+    # Create/update config file
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # Update existing config
+        if grep -q "^${key}=" "$CONFIG_FILE"; then
+            # Replace existing line
+            sudo sed -i "s/^${key}=.*/${key}=${value}/" "$CONFIG_FILE"
+        else
+            # Add new line
+            echo "${key}=${value}" | sudo tee -a "$CONFIG_FILE" > /dev/null
+        fi
+    else
+        # Create new config file
+        echo "${key}=${value}" | sudo tee "$CONFIG_FILE" > /dev/null
+    fi
+    
+    echo "Configuration updated: $key=$value"
+}
+
+# Parse command
+case "${1:-}" in
+    get)
+        if [[ $# -lt 2 ]]; then
+            echo "Usage: $0 get <setting>"
+            exit 1
+        fi
+        setting="$2"
+        value=$(get_config "$setting")
+        echo "$value"
+        ;;
+    set)
+        if [[ $# -lt 3 ]]; then
+            echo "Usage: $0 set <setting> <value>"
+            exit 1
+        fi
+        setting="$2"
+        value="$3"
+        set_config "$setting" "$value"
+        ;;
+    list)
+        echo "Current configuration:"
+        echo "  auto_update = $(get_config auto_update)"
+        echo "  check_updates = $(get_config check_updates)"
+        echo "  update_security_only = $(get_config update_security_only)"
+        ;;
+    *)
+        echo "Usage: $0 {get|set|list} [setting] [value]"
+        echo "  get <setting>     - Get current value of a setting"
+        echo "  set <setting> <value> - Set a configuration value (true/false)"
+        echo "  list              - List all current configuration values"
+        echo
+        echo "Available settings:"
+        echo "  auto_update       - Enable/disable automatic updates (default: $DEFAULT_AUTO_UPDATE)"
+        echo "  check_updates     - Enable/disable update checking (default: $DEFAULT_CHECK_UPDATES)"
+        echo "  update_security_only - Only update security-related packages (default: $DEFAULT_UPDATE_SECURITY_ONLY)"
+        exit 1
+        ;;
+esac

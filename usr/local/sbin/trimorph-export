@@ -1,0 +1,181 @@
+#!/bin/bash
+set -euo pipefail
+
+# Check for required dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for required commands
+    for cmd in sudo systemd-nspawn mktemp chmod; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_deps+=("$cmd")
+        fi
+    done
+    
+    # Check for required trimorph scripts
+    local script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+    for script in trimorph-parse-conf; do
+        if [[ ! -x "$script_dir/$script" ]]; then
+            missing_deps+=("$script_dir/$script")
+        fi
+    done
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo "Error: Missing required dependencies:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        exit 1
+    fi
+}
+
+check_dependencies
+
+# --- Self-locating Script ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# Allow overriding paths for testing, with sensible defaults
+TRIMORPH_ETC_DIR="${TRIMORPH_ETC_DIR:-/etc/trimorph}"
+TRIMORPH_BASE_DIR="${TRIMORPH_BASE_DIR:-/usr/local/trimorph/base}"
+TRIMORPH_CACHE_DIR="${TRIMORPH_CACHE_DIR:-/var/cache/trimorph/packages}"
+TRIMORPH_EXPORT_DIR="${TRIMORPH_EXPORT_DIR:-/var/cache/trimorph/export}"
+
+# Check required arguments
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 <jail> <package> [package...]"
+    exit 1
+fi
+
+jail="$1"; shift
+
+# Ensure configuration directory exists
+config_dir="${TRIMORPH_ETC_DIR}/jails.d"
+if [[ ! -d "$config_dir" ]]; then
+    echo "Error: Configuration directory does not exist: $config_dir"
+    echo "Please create the directory and add jail configuration files"
+    exit 1
+fi
+
+conf="${TRIMORPH_ETC_DIR}/jails.d/$jail.conf"
+if [[ ! -r "$conf" ]]; then
+    echo "[FAIL] Config file not found or not readable: $conf"
+    exit 1
+fi
+
+# Source configuration
+source <($SCRIPT_DIR/trimorph-parse-conf "$conf")
+
+# Validate jail is bootstrapped
+base_root="${TRIMORPH_BASE_DIR}/$jail"
+if [[ ! -d "$base_root" ]]; then
+    echo "[FAIL] Base image is missing. Run 'sudo trimorph-bootstrap $jail'"
+    exit 1
+fi
+
+echo "Exporting packages from jail: $jail"
+
+# Create export directory
+mkdir -p "$TRIMORPH_EXPORT_DIR/$jail"
+
+# Install packages in the jail first
+temp_script=$(mktemp)
+cat > "$temp_script" << 'EOF'
+#!/bin/bash
+# Script to be run inside the jail
+set -euo pipefail
+
+TRIMORPH_PKG_MGR_ARGS="$1"
+shift
+packages=("$@")
+
+# Install packages using the jail's package manager
+case "$TRIMORPH_PKG_MGR" in
+    *apt)
+        apt-get update
+        apt-get install -y "${packages[@]}"
+        # List installed files
+        for pkg in "${packages[@]}"; do
+            dpkg -L "$pkg" | grep -v '^/usr/share/doc' | grep -v '^/usr/share/man' | sed 's/^/\\//'
+        done > /tmp/installed_files.txt
+        ;;
+    *pacman)
+        pacman -Sy --noconfirm
+        pacman -S --noconfirm "${packages[@]}"
+        # List installed files
+        for pkg in "${packages[@]}"; do
+            pacman -Ql "$pkg" | awk '{print $2}' | sed 's/^/\\//'
+        done > /tmp/installed_files.txt
+        ;;
+    *xbps)
+        xbps-install -Sy
+        xbps-install -y "${packages[@]}"
+        # List installed files
+        for pkg in "${packages[@]}"; do
+            xbps-query -f "$pkg"
+        done > /tmp/installed_files.txt
+        ;;
+    *apk)
+        apk update
+        apk add "${packages[@]}"
+        # List installed files
+        for pkg in "${packages[@]}"; do
+            apk info -L "$pkg"
+        done > /tmp/installed_files.txt
+        ;;
+    *)
+        echo "Unsupported package manager: $TRIMORPH_PKG_MGR"
+        exit 1
+        ;;
+esac
+EOF
+
+# Make script executable
+chmod +x "$temp_script"
+
+# Prepare to run the command in the jail
+overlay_upper="${TRIMORPH_CACHE_DIR}/tmp_${jail}_export_$$"
+overlay_work="${TRIMORPH_CACHE_DIR}/tmp_${jail}_work_$$"
+
+# Extract package manager args from config
+pkgmgr_args_var_name="TRIMORPH_pkgmgr_args"
+pkgmgr_args_value="${!pkgmgr_args_var_name}"
+
+# Create nspawn command to install packages
+nspawn_cmd=(
+    systemd-nspawn
+    --quiet
+    --directory="$TRIMORPH_root"
+    --overlay="${base_root}:${overlay_upper}:${overlay_work}"
+    --bind-ro=/tmp/.X11-unix
+    --bind-ro=/dev/dri
+    --bind-ro=/etc/resolv.conf
+    --setenv=TRIMORPH_PKG_MGR_ARGS="$pkgmgr_args_value"
+    --setenv=TRIMORPH_PKG_MGR="$TRIMORPH_pkgmgr"
+    /bin/bash /tmp/install_packages.sh "${pkgmgr_args_value}" "$@"
+)
+
+# Create install script in the overlay
+mkdir -p "$overlay_upper/tmp"
+cp "$temp_script" "$overlay_upper/tmp/install_packages.sh"
+
+# Run the installation
+if ! sudo "${nspawn_cmd[@]}"; then
+    echo "Failed to install packages in jail"
+    sudo rm -rf "$overlay_upper" "$overlay_work"
+    rm -f "$temp_script"
+    exit 1
+fi
+
+# Extract the installed files list
+if [[ -f "$overlay_upper/tmp/installed_files.txt" ]]; then
+    cp "$overlay_upper/tmp/installed_files.txt" "$TRIMORPH_EXPORT_DIR/$jail/installed_files.txt"
+    echo "Package files listed in: $TRIMORPH_EXPORT_DIR/$jail/installed_files.txt"
+else
+    echo "Could not find list of installed files"
+fi
+
+# Clean up
+sudo rm -rf "$overlay_upper" "$overlay_work"
+rm -f "$temp_script"
+
+echo "Export preparation completed for jail: $jail"

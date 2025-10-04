@@ -1,0 +1,126 @@
+#!/bin/bash
+set -euo pipefail
+
+# Script to uninstall packages that were installed to the host from Trimorph
+
+# Check required arguments
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <install_log_file>"
+    exit 1
+fi
+
+install_log="$1"
+
+# Check if install log exists
+if [[ ! -f "$install_log" ]]; then
+    echo "Error: Install log file not found: $install_log"
+    exit 1
+fi
+
+# Verify this is a Trimorph install log
+if ! head -n 5 "$install_log" | grep -q "# Installation log for packages:"; then
+    echo "Error: Not a valid Trimorph installation log file: $install_log"
+    exit 1
+fi
+
+# Extract the list of files from the install log
+# The file list starts after the informational lines
+file_list_start=$(grep -n "^/" "$install_log" | head -n 1 | cut -d: -f1)
+if [[ -z "$file_list_start" ]]; then
+    echo "Error: No installed files found in log: $install_log"
+    exit 1
+fi
+
+# Get the list of installed files
+installed_files=()
+while IFS= read -r file_path; do
+    if [[ -n "$file_path" ]]; then
+        installed_files+=("$file_path")
+    fi
+done < <(tail -n +$file_list_start "$install_log")
+
+if [[ ${#installed_files[@]} -eq 0 ]]; then
+    echo "No files to uninstall."
+    exit 0
+fi
+
+echo "Files to be removed:"
+for file in "${installed_files[@]}"; do
+    echo "  $file"
+done
+
+echo
+echo "Jail: $(grep '# From jail:' "$install_log" | cut -d: -f2 | xargs)"
+echo "Packages: $(grep '# Installation log for packages:' "$install_log" | cut -d: -f2 | xargs)"
+
+# Confirm uninstallation
+echo
+read -p "Do you want to remove these files from the host system? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Uninstallation cancelled."
+    exit 0
+fi
+
+# Remove files
+removed_count=0
+failed_count=0
+for file_path in "${installed_files[@]}"; do
+    if [[ -e "$file_path" ]]; then
+        if sudo rm -f "$file_path"; then
+            echo "Removed: $file_path"
+            ((removed_count++))
+        else
+            echo "Failed to remove: $file_path"
+            ((failed_count++))
+        fi
+    elif [[ -L "$file_path" ]]; then
+        # Handle symbolic links
+        if sudo rm -f "$file_path"; then
+            echo "Removed symlink: $file_path"
+            ((removed_count++))
+        else
+            echo "Failed to remove symlink: $file_path"
+            ((failed_count++))
+        fi
+    else
+        # File doesn't exist, which is fine
+        echo "File not found (already removed?): $file_path"
+    fi
+done
+
+# Remove empty directories that might have been left behind
+for file_path in "${installed_files[@]}"; do
+    dir_path=$(dirname "$file_path")
+    # Try to remove the directory if it's now empty
+    while [[ "$dir_path" != "/" && "$dir_path" != "/usr" && "$dir_path" != "/usr/local" ]]; do
+        if [[ -d "$dir_path" ]]; then
+            if sudo rmdir "$dir_path" 2>/dev/null; then
+                echo "Removed empty directory: $dir_path"
+            else
+                # Directory not empty or couldn't be removed, stop here
+                break
+            fi
+        fi
+        dir_path=$(dirname "$dir_path")
+    done
+done
+
+# Update the database to remove package entries
+packages_line=$(grep '# Installation log for packages:' "$install_log" | cut -d: -f2 | xargs)
+for package in $packages_line; do
+    # Remove package from database
+    if [[ -x "/usr/local/bin/trimorph-db" ]]; then
+        /usr/local/bin/trimorph-db remove-package "$package" 2>/dev/null || true
+    fi
+done
+
+# Mark the install log as removed
+sudo mv "$install_log" "${install_log}.removed"
+echo
+echo "Uninstallation completed."
+echo "Files removed: $removed_count"
+if [[ $failed_count -gt 0 ]]; then
+    echo "Files that failed to remove: $failed_count"
+fi
+echo "Installation log moved to: ${install_log}.removed"

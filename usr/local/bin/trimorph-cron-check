@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+
+# Script to be run from cron to check for updates
+
+# Load configuration
+CONFIG_FILE="/etc/trimorph/trimorph.conf"
+
+# Default settings
+AUTO_UPDATE_DEFAULT="false"
+CHECK_UPDATES_DEFAULT="true"
+
+# Initialize settings
+AUTO_UPDATE="$AUTO_UPDATE_DEFAULT"
+CHECK_UPDATES="$CHECK_UPDATES_DEFAULT"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    # Source configuration file if it exists
+    while IFS='=' read -r key value; do
+        case "$key" in
+            auto_update) AUTO_UPDATE="$value" ;;
+            check_updates) CHECK_UPDATES="$value" ;;
+        esac
+    done < <(grep -E "^(auto_update|check_updates)=" "$CONFIG_FILE" 2>/dev/null || true)
+fi
+
+# Check if update checking is enabled
+if [[ "$CHECK_UPDATES" != "true" ]]; then
+    # Update checking is disabled, exit silently
+    exit 0
+fi
+
+# Only run auto-update if enabled
+if [[ "$AUTO_UPDATE" == "true" ]]; then
+    /usr/local/bin/trimorph-auto-update
+else
+    # Even if auto-update is disabled, we can still check for updates
+    # This could be useful to log that updates are available
+    echo "$(date): Update check run (auto-update is disabled)" >> /tmp/trimorph-cron.log 2>/dev/null || true
+fi
