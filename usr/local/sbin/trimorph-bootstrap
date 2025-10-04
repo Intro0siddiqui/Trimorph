@@ -15,11 +15,31 @@ TRIMORPH_ETC_DIR="${TRIMORPH_ETC_DIR:-/etc/trimorph}"
 TRIMORPH_BASE_DIR="${TRIMORPH_BASE_DIR:-/usr/local/trimorph/base}"
 TRIMORPH_LOG_DIR="${TRIMORPH_LOG_DIR:-/var/log/trimorph}"
 
-jail="$1"; [[ -n "$jail" ]] || { echo "Usage: $0 <jail>"; exit 1; }
+if [[ $# -lt 1 ]]; then echo "Usage: $0 <jail>" >&2; exit 1; fi
+jail="$1"
+# Sanitize jail name to avoid path traversal or injection
+if [[ ! "$jail" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "error: invalid jail name: $jail" >&2; exit 1;
+fi
+
 conf="${TRIMORPH_ETC_DIR}/jails.d/$jail.conf"
-[[ -f "$conf" ]] || { echo "error: config not found at $conf"; exit 1; }
+[[ -f "$conf" ]] || { echo "error: config not found at $conf" >&2; exit 1; }
+
+# Ensure parser exists
+[[ -x "$SCRIPT_DIR/trimorph-parse-conf" ]] || { echo "error: missing parser at $SCRIPT_DIR/trimorph-parse-conf" >&2; exit 1; }
 
 source <($SCRIPT_DIR/trimorph-parse-conf "$conf")
+
+# Basic config validation
+if [[ -z "${TRIMORPH_root:-}" || -z "${TRIMORPH_bootstrap:-}" ]]; then
+  echo "error: config missing required keys: root and/or bootstrap" >&2; exit 1;
+fi
+if [[ "$TRIMORPH_root" != /* ]]; then
+  echo "error: root must be an absolute path: $TRIMORPH_root" >&2; exit 1;
+fi
+if [[ "$TRIMORPH_bootstrap" != *"{root}"* ]]; then
+  echo "error: bootstrap must reference {root} placeholder" >&2; exit 1;
+fi
 
 # Define the path for the read-only base image
 base_root="${TRIMORPH_BASE_DIR}/$jail"

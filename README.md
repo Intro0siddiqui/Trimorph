@@ -131,6 +131,65 @@ Simple wrappers in `/usr/local/bin` redirect calls for `apt` and `pacman` to the
 ### 6.2 Portage Safety Hook (`/etc/portage/bashrc`)
 An optional hook that automatically stops any active Trimorph jail before a Portage `emerge` process begins, preventing potential conflicts.
 
+### 6.3 Cross-Distribution Package Installation
+Trimorph now supports installing packages from foreign package managers directly to the host system using the new installation tools:
+
+- `trimorph-install-to-host <jail> <package> [package...]`: Install packages from a jail to the host system
+- `trimorph-uninstall-from-host <log_file>`: Remove previously installed packages
+- `trimorph-validate <jail> <package>`: Check if a package exists in a jail's repository
+- `trimorph-dry-run <jail> <package> [package...]`: Preview what would be installed (including dependencies)
+- `trimorph-check-deps <jail> <package>`: Analyze potential dependency conflicts
+
+### 6.4 Automatic Dependency Update Management
+Trimorph now includes automatic dependency checking and updating functionality:
+
+- `trimorph-update-check`: Check for available updates to installed foreign packages
+- `trimorph-auto-update`: Manually run the auto-update process
+- `trimorph-config {get|set} <setting> [value]`: Configure update settings
+- `trimorph-cron-check`: Run from cron for periodic update checking
+
+Configuration options:
+- `auto_update`: Enable/disable automatic updates (default: false)
+- `check_updates`: Enable/disable update checking (default: true)
+- `update_security_only`: Only update security-related packages (default: false)
+
+Example usage:
+```bash
+# Install htop from the Debian jail to the host
+trimorph-install-to-host deb htop
+
+# Check for available updates
+trimorph-update-check
+
+# Configure auto-update
+trimorph-config set auto_update true
+trimorph-config set check_updates true
+
+# Preview installation with dependency information
+trimorph-dry-run deb htop
+
+# Check for potential dependency conflicts
+trimorph-check-deps deb htop
+
+# List installed packages
+ls /var/lib/trimorph/host-installs/
+
+# Set up daily update checking via cron (as root)
+# Add this line to root's crontab: crontab -e
+0 2 * * * /usr/local/bin/trimorph-cron-check
+```
+
+**Important Notes:**
+- Installing packages from foreign package managers to the host system bypasses normal package management
+- Dependencies are automatically included and may cause conflicts with your host system
+- Use `trimorph-dry-run` and `trimorph-check-deps` to preview installations and check for conflicts
+- The system automatically checks for updates after installation
+- Configure auto-update with caution as it may affect system stability
+- This may cause dependency or library conflicts with your host system
+- Use with caution and always verify compatibility before installation
+- Keep a record of installed files to facilitate cleanup
+- Use `trimorph-uninstall-from-host` to remove packages when no longer needed
+
 ---
 
 ## 7. Utilities
@@ -138,6 +197,7 @@ An optional hook that automatically stops any active Trimorph jail before a Port
 ### 7.1 Status & Cleanup
 -   `trimorph-status`: Checks and displays the status of all configured jails (active or inactive).
 -   `trimorph-cleanup`: Immediately stops all running Trimorph scopes.
+-   `trimorph-export <jail> <package> [package...]`: Export packages from a jail for offline use
 
 ### 7.2 Diagnostics & Dry-Run
 Trimorph includes flags for validating your setup and simulating commands without making any changes.
