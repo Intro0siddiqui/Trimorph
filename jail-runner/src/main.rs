@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::process::Command;
-use std::fs;
 
 /// Represents the detected init system.
 #[derive(Debug, PartialEq)]
