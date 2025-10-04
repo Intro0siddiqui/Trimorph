@@ -194,7 +194,18 @@ trimorph-status
 
 ---
 
-## 10. Conclusion
+## 10. OpenRC Support and Rust Jail Runner
+
+**Trimorph** now includes experimental support for OpenRC-based systems through a new Rust-based jail runner:
+
+- **Cross-Platform Compatibility**: Works on both systemd and OpenRC hosts
+- **Rust Implementation**: High-performance binary with memory safety
+- **Automatic Detection**: Automatically detects init system and uses appropriate sandboxing backend
+- **Backend Selection**:
+  - On **systemd** hosts: Uses `systemd-nspawn` (traditional approach)
+  - On **OpenRC** hosts: Uses `bubblewrap` for secure sandboxing
+
+## 11. Conclusion
 
 **Trimorph** delivers safe, modular, on-demand multi-distro package management on Gentoo with no compromises on host purity, security, or resource usage.
 > Install once. Run anything. One jail at a time.

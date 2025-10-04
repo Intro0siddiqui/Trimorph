@@ -50,12 +50,28 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             if (selectedJail) {
-                // Execute trimorph-solo command in the background
-                const command = `trimorph-solo ${selectedJail} echo "Switched to ${selectedJail}"`;
+                // Execute the Rust jail-runner binary in the background
+                const command = `jail-runner ${selectedJail} echo "Switched to ${selectedJail}"`;
                 
                 exec(command, (error, stdout, stderr) => {
                     if (error) {
-                        vscode.window.showErrorMessage(`Error switching to jail ${selectedJail}: ${error.message}`);
+                        // Fallback to trimorph-solo if jail-runner is not available
+                        const fallbackCommand = `trimorph-solo ${selectedJail} echo "Switched to ${selectedJail}"`;
+                        exec(fallbackCommand, (fallbackError, fallbackStdout, fallbackStderr) => {
+                            if (fallbackError) {
+                                vscode.window.showErrorMessage(`Error switching to jail ${selectedJail} (both jail-runner and trimorph-solo failed): ${fallbackError.message}`);
+                                return;
+                            }
+                            if (fallbackStderr) {
+                                console.error(`stderr: ${fallbackStderr}`);
+                                vscode.window.showWarningMessage(`Warning: ${fallbackStderr}`);
+                            }
+                            console.log(`stdout: ${fallbackStdout}`);
+                            vscode.window.showInformationMessage(`Switched to Trimorph jail: ${selectedJail} (using fallback)`);
+                            
+                            // Update status bar after switching
+                            updateStatusBar(statusBarItem);
+                        });
                         return;
                     }
                     if (stderr) {
@@ -63,7 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
                         vscode.window.showWarningMessage(`Warning: ${stderr}`);
                     }
                     console.log(`stdout: ${stdout}`);
-                    vscode.window.showInformationMessage(`Switched to Trimorph jail: ${selectedJail}`);
+                    vscode.window.showInformationMessage(`Switched to Trimorph jail: ${selectedJail} (using Rust jail-runner)`);
                     
                     // Update status bar after switching
                     updateStatusBar(statusBarItem);
