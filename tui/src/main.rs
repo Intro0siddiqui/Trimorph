@@ -373,6 +373,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App, config: 
                     if key.code == KeyCode::Esc {
                         app.show_popup = false;
                     }
+                } else if app.show_help {
+                    if key.code == KeyCode::Esc || key.code == KeyCode::Char('h') {
+                        app.show_help = false;
+                    }
                 } else {
                     match key.code {
                         KeyCode::Char('q') => return Ok(()),
@@ -456,13 +460,42 @@ fn ui(f: &mut Frame, app: &mut App, config: &Config) {
     let log_text = app.log_lines.join("");
     f.render_widget(LogView::new("Logs", &log_text), main_chunks[1]);
 
-    f.render_widget(StatusBar::new("Press 'q' to quit, 'Up'/'Down' to navigate, 'c' for check, 'd' for dry-run, 'i' for install to host, 'u' for update check, 's' for status, 'g' for config, 'e' for cleanup, 'x' for export.")
+    let parallel_status = if app.parallel_mode { " [PARALLEL ON]" } else { " [PARALLEL OFF]" };
+    let status_text = format!("Press 'q' to quit, 'Up'/'Down' to navigate, 'c' for check, 'd' for dry-run, 'i' for install to host, 'u' for update check, 's' for status, 'g' for config, 'e' for cleanup, 'x' for export.{}", parallel_status);
+    f.render_widget(StatusBar::new(&status_text)
         .style(Style::default().fg(config.theme.main_fg.0).bg(config.theme.main_bg.0)), chunks[2]);
 
     if app.show_popup {
         let block = Block::default().title(app.popup_title.as_str()).borders(Borders::ALL);
         let area = centered_rect(60, 50, f.size());
         let paragraph = Paragraph::new(app.popup_content.as_str()).block(block).wrap(Wrap { trim: true });
+        f.render_widget(Clear, area); //this clears the background
+        f.render_widget(paragraph, area);
+    } else if app.show_help {
+        let block = Block::default().title("Help Information").borders(Borders::ALL);
+        let area = centered_rect(70, 80, f.size());
+        let parallel_status = if app.parallel_mode { "ON" } else { "OFF" };
+        let help_content = format!("Trimorph TUI Help:\n\n\
+            Navigation:\n\
+            - Up/Down: Navigate between jails\n\
+            - q: Quit the application\n\n\
+            Jail Operations:\n\
+            - c: Run check command on selected jail\n\
+            - d: Run dry-run command on selected jail\n\
+            - p: Toggle parallel mode\n\n\
+            Host Installation:\n\
+            - i: Install packages to host from selected jail\n\n\
+            Updates & Management:\n\
+            - u: Check for updates\n\
+            - g: Get configuration settings\n\n\
+            Utilities:\n\
+            - s: Show status of all jails\n\
+            - e: Run cleanup command\n\
+            - x: Export from selected jail\n\
+            - h: Show this help\n\n\
+            Parallel Mode: {}",
+            parallel_status);
+        let paragraph = Paragraph::new(help_content).block(block).wrap(Wrap { trim: true });
         f.render_widget(Clear, area); //this clears the background
         f.render_widget(paragraph, area);
     }
