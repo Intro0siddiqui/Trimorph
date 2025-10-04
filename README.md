@@ -275,6 +275,18 @@ apt update
 pacman -Sy firefox
 emerge -avuDN @world # auto-kills foreign scopes
 trimorph-status
+
+# Cross-distribution package installation
+trimorph-validate deb htop          # Verify package exists
+trimorph-dry-run deb htop          # Preview installation
+trimorph-check-deps deb htop       # Check for dependency conflicts
+trimorph-install-to-host deb htop  # Install to host system
+trimorph-uninstall-from-host /var/lib/trimorph/host-installs/deb_*.log  # Remove package
+
+# Package export and management
+trimorph-export deb htop           # Export packages for offline use
+trimorph-update-check             # Check for updates to installed foreign packages
+trimorph-config list              # List configuration settings
 ```
 
 ---
