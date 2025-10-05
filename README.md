@@ -50,13 +50,70 @@ This architecture provides:
 ## 3. Installation
 
 ### 3.1 Host Dependencies
+
+Trimorph requires different dependencies depending on your host distribution. Install the relevant packages:
+
+**Gentoo:**
 ```bash
-sudo emerge -av app-arch/dpkg dev-util/apt app-arch/pacman app-arch/debootstrap sys-apps/systemd
+sudo emerge -av app-arch/dpkg dev-util/apt app-arch/pacman app-arch/debootstrap sys-apps/systemd rust cargo
 ```
 
-### 3.2 Directory Setup
+**Debian/Ubuntu:**
 ```bash
-sudo mkdir -p /etc/trimorph/{jails.d,runtime} /var/log/trimorph
+sudo apt install debootstrap systemd-container systemd-sysv rustc cargo bubblewrap
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install debootstrap systemd-container systemd-rpm-macros rust cargo bubblewrap
+# or for RHEL/CentOS:
+sudo yum install debootstrap systemd-container rust cargo bubblewrap
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S debootstrap arch-install-scripts systemd rust bubblewrap
+```
+
+**Alpine:**
+```bash
+sudo apk add debootstrap systemd rust bubblewrap
+```
+
+### 3.2 Quick Installation
+
+Trimorph provides multiple ways to install:
+
+**Method 1: Using the installation script**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+**Method 2: Using Make**
+```bash
+make build
+sudo make install
+```
+
+### 3.3 Manual Installation
+
+If you prefer manual installation:
+
+```bash
+# Build the Rust components
+cd tui && cargo build --release
+cd ../jail-runner && cargo build --release
+cd ..
+
+# Install all components
+sudo make install
+```
+
+### 3.4 Directory Setup (if installing manually)
+
+```bash
+sudo mkdir -p /etc/trimorph/{jails.d,runtime} /var/log/trimorph /var/cache/trimorph/packages /var/lib/trimorph/host-installs
 sudo mkdir -p /usr/local/{bin,sbin}
 ```
 
@@ -88,7 +145,56 @@ The core script that manages jails. It ensures only one jail is active at a time
 ### 4.3 Bootstrap Tool (`/usr/local/sbin/trimorph-bootstrap`)
 A one-time setup script that prepares a jail's root directory and runs the bootstrap command defined in its `.conf` file.
 
+### 4.4 Component Overview
+This section details each file's specific function in the Trimorph system:
+
+#### TUI Components
+- **`/tui/src/main.rs`**: Main entry point for the Terminal UI, handles UI rendering, user input, and integration with CLI tools
+- **`/tui/src/components/log_view.rs`**: Renders live jail logs in the UI
+- **`/tui/src/components/resource_monitor.rs`**: Displays CPU and Memory usage gauges
+- **`/tui/src/components/status_bar.rs`**: Shows status information and keyboard shortcuts
+- **`/tui/src/components/title_bar.rs`**: Displays the Trimorph logo and title
+- **`/tui/src/config.rs`**: Handles TUI configuration and theming
+
+#### Core CLI Tools
+- **`/usr/local/sbin/trimorph-solo`**: Core execution engine for running commands in isolated jails
+- **`/usr/local/sbin/trimorph-parse-conf`**: Safe configuration file parser (no eval usage)
+- **`/usr/local/sbin/trimorph-bootstrap`**: Jail initialization and setup tool
+- **`/usr/local/sbin/trimorph-install`**: Core installation engine for packages
+
+#### Cross-Distribution Installation Tools
+- **`/usr/local/bin/trimorph-install-to-host`**: Install packages from jails to the host system
+- **`/usr/local/bin/trimorph-uninstall-from-host`**: Remove previously installed foreign packages
+- **`/usr/local/bin/trimorph-validate`**: Verify packages exist in a jail's repository
+- **`/usr/local/bin/trimorph-dry-run`**: Preview installations without executing them
+- **`/usr/local/bin/trimorph-check-deps`**: Analyze dependency conflicts before installation
+
+#### Update Management Tools
+- **`/usr/local/bin/trimorph-update-check`**: Check for updates to installed foreign packages
+- **`/usr/local/bin/trimorph-auto-update`**: Automatic update processing
+- **`/usr/local/bin/trimorph-config`**: Configuration management for update settings
+- **`/usr/local/bin/trimorph-cron-check`**: Cron-based update checking
+
+#### Utility Tools
+- **`/usr/local/bin/trimorph-status`**: Check status of all configured jails
+- **`/usr/local/bin/trimorph-cleanup`**: Stop all running Trimorph scopes
+- **`/usr/local/bin/trimorph-export`**: Export packages from jails for offline use
+- **`/usr/local/bin/trimorph-db`**: Package database management
+
+#### Cross-Platform Support
+- **`/jail-runner/src/main.rs`**: Rust-based jail runner that automatically detects init system (systemd/OpenRC), uses systemd-nspawn for systemd systems and bubblewrap for OpenRC systems
+- **`/jail-runner/Cargo.toml`**: Build configuration for the cross-platform jail runner
+- **`/jail-runner/target/release/jail-runner`**: Built binary that provides consistent jail execution interface across different init systems
+
+#### Wrapper Scripts
+- **`/usr/local/bin/{apt,pacman,dnf,apk,zypper}`**: Package manager wrappers that redirect to trimorph-solo
+
+#### Main Entry Points
+- **`/trimorph`**: Project root entry point that launches the TUI when executed
+- **`/tui/Cargo.toml`**: Build configuration for the Terminal UI
+
 ---
+
 
 ## 5. Default Jail Configurations
 
@@ -189,6 +295,43 @@ ls /var/lib/trimorph/host-installs/
 - Use with caution and always verify compatibility before installation
 - Keep a record of installed files to facilitate cleanup
 - Use `trimorph-uninstall-from-host` to remove packages when no longer needed
+
+### 6.5 Local Package Installation
+Trimorph now supports installing packages directly from local package files:
+
+- `trimorph-install-local <package_file> [package_file...]`: Install local packages to the host system (supports .deb, .rpm, .pkg.tar.zst, .apk, .tbz, etc.)
+- `trimorph-uninstall-local <install_log_file>`: Remove previously installed local packages
+
+Example usage:
+```bash
+# Install a local .deb package to the host system
+trimorph-install-local /path/to/package.deb
+
+# Install an Arch package (like Warp Terminal)
+trimorph-install-local /home/gentoo/Downloads/warp-terminal-v0.2025.10.01.08.12.stable_02-1-x86_64.pkg.tar.zst
+
+# Install multiple packages at once
+trimorph-install-local /path/to/package1.deb /path/to/package2.rpm
+
+# Uninstall a locally installed package using its log file
+trimorph-uninstall-local /var/lib/trimorph/host-installs/local_package_name_timestamp.log
+
+# Check for available updates (includes locally installed packages)
+trimorph-update-check
+```
+
+**Features:**
+- Automatic package format detection (supports .deb, .rpm, .pkg.tar.zst, .apk, .tbz, .pkg.tar.xz, .pkg.tar.gz)
+- Dependency extraction and installation using appropriate Trimorph jails
+- File conflict detection and handling
+- Automatic desktop database updates for applications with URL scheme handlers
+- SHA256 checksum verification
+- Integration with Trimorph's database and logging system
+
+**Important Notes:**
+- For URL scheme handlers (like `warp://`) to work properly, you may need to restart your desktop environment or run `sudo update-desktop-database /usr/share/applications`
+- Package dependencies are automatically identified and can be installed from appropriate jails if available
+- The system maintains logs of all installed files for proper uninstallation
 
 ---
 
@@ -302,25 +445,51 @@ trimorph-config list              # List configuration settings
 
 ---
 
-## 10. OpenRC Support and Rust Jail Runner
+## 10. Cross-Distribution Support
 
-**Trimorph** now includes experimental support for OpenRC-based systems through a new Rust-based jail runner:
+**Trimorph** provides robust support across different Linux distributions:
 
-- **Cross-Platform Compatibility**: Works on both systemd and OpenRC hosts
-- **Rust Implementation**: High-performance binary with memory safety
-- **Automatic Detection**: Automatically detects init system and uses appropriate sandboxing backend
+- **Multi-Distro Compatibility**: Works on Gentoo, Debian, Ubuntu, Fedora, Arch, Alpine, and other Linux distributions
+- **Init System Detection**: Automatically detects init system (systemd/OpenRC) and uses appropriate sandboxing backend
+- **Rust Implementation**: High-performance binaries with memory safety
 - **Backend Selection**:
-  - On **systemd** hosts: Uses `systemd-nspawn` (traditional approach)
-  - On **OpenRC** hosts: Uses `bubblewrap` for secure sandboxing
+  - On **systemd** hosts: Uses `systemd-nspawn` for containerization
+  - On **OpenRC** and other systems: Uses `bubblewrap` for secure sandboxing
+- **Distribution-Agnostic Design**: Configuration files work across all distributions
+- **Easy Installation**: Simple installation process adaptable to any distribution
 
-## 11. Conclusion
+For detailed setup instructions on your specific distribution, see: [CROSS_DISTRO_SETUP.md](CROSS_DISTRO_SETUP.md)
 
-**Trimorph** delivers safe, modular, on-demand multi-distro package management on Gentoo with no compromises on host purity, security, or resource usage.
+## 11. Available Distro Jails
+
+Trimorph supports the following distributions out of the box:
+
+| Distribution | Wrapper Command | Configuration File | Bootstrap Required |
+|--------------|-----------------|--------------------|-------------------|
+| Debian/Ubuntu | `apt` | `deb.conf` | `sudo trimorph-bootstrap deb` |
+| Arch Linux | `pacman` | `arch.conf` | `sudo trimorph-bootstrap arch` |
+| Fedora | `dnf` | `fedora.conf` | `sudo trimorph-bootstrap fedora` |
+| Alpine | `apk` | `alpine.conf` | `sudo trimorph-bootstrap alpine` |
+| openSUSE | `zypper` | `opensuse.conf` | `sudo trimorph-bootstrap opensuse` |
+
+## 12. OpenRC Support and Rust Jail Runner
+
+The Rust jail runner provides the cross-platform sandboxing functionality:
+
+- **Automatic Init Detection**: Detects systemd vs OpenRC automatically
+- **Secure Sandbox Backends**: Uses appropriate tools for each system
+- **Resource Management**: Properly handles overlay filesystems and resource limits
+- **Package Manager Integration**: Works with various package managers across distributions
+
+## 13. Conclusion
+
+**Trimorph** delivers safe, modular, on-demand multi-distro package management with no compromises on host purity, security, or resource usage. It works consistently across all Linux distributions.
 > Install once. Run anything. One jail at a time.
 
 ---
 
-## 12. Testing
+
+## 14. Testing
 
 This project uses `bats-core` for its test suite. The tests are located in the `test/` directory.
 
@@ -329,3 +498,43 @@ To run the tests, execute the following command from the project root:
 ./test/bats-core/bin/bats test/core.bats
 ```
 A Continuous Integration (CI) workflow is also set up using GitHub Actions to automatically run the test suite on every push.
+
+## 15. Building and Development
+
+Trimorph provides multiple ways to build and install:
+
+### Using Make
+```bash
+# Build all Rust components
+make build
+
+# Install to system
+sudo make install
+
+# Install only binaries
+sudo make install-bin
+
+# Install only configurations
+sudo make install-config
+
+# Clean build artifacts
+make clean
+```
+
+### Using Installation Script
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+### Manual Build
+```bash
+# Build TUI
+cd tui && cargo build --release && cd ..
+
+# Build jail runner
+cd jail-runner && cargo build --release && cd ..
+
+# Install manually
+sudo make install
+```
