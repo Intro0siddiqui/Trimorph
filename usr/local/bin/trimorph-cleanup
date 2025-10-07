@@ -1,3 +1,0 @@
-#!/bin/bash
-systemctl stop trimorph-*.scope 2>/dev/null || true
-echo "All Trimorph scopes stopped."

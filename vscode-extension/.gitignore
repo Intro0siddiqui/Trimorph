@@ -1,5 +1,0 @@
-# Ignore node_modules and compiled output
-node_modules
-out
-.vscode-test/
-*.vsix

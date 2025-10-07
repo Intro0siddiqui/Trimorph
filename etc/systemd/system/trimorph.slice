@@ -1,4 +1,0 @@
-[Slice]
-CPUQuota=50%
-MemoryMax=120M
-TasksMax=50
