@@ -1,4 +1,19 @@
-jail-runner/target/
-tui/target/
+# Compiled binaries
 final-pkgmgr
-trimorph
+unit_tests
+
+# Script files (these should be regenerated)
+*.sh
+
+# Temporary files
+*.tmp
+*.log
+*~
+
+# Build artifacts
+*.o
+*.out
+*.bin
+
+# Test outputs
+test_*

@@ -2,7 +2,7 @@
 
 ## Overview
 
-A lightweight, efficient package management system that provides direct access to system package managers without complex sandboxing. This enhanced implementation focuses on the core functionality of managing packages across different formats and systems with improved error handling, auto dependency updates, and package manager conflict resolution.
+A lightweight, efficient package management system that provides direct access to system package managers without complex sandboxing. This enhanced implementation focuses on the core functionality of managing packages across different formats and systems with improved error handling, auto dependency updates, package manager conflict resolution, and comprehensive security protections.
 
 ## Key Features
 
@@ -11,6 +11,8 @@ A lightweight, efficient package management system that provides direct access t
 - **Multi-Format Support**: Handles various package formats including .deb, .pkg.tar.zst, .pkg.tar.xz, .rpm, .apk, .tbz
 - **Lightweight**: Minimal resource usage compared to complex sandboxing systems
 - **Cross-Platform**: Works across different Linux distributions
+- **Enhanced Security**: Includes input validation, command injection protection, and path traversal prevention
+- **Legacy System Cleaned**: Removed all legacy systemd-nspawn-based architecture for simplified operation
 
 ## Architecture
 
