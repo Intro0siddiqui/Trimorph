@@ -1,8 +1,8 @@
-# **Simplified Package Management Core (pkgmgr-core)**
+# **Trimorph - Enhanced Package Management System**
 
 ## Overview
 
-A lightweight, efficient package management system that provides direct access to system package managers without complex sandboxing. This implementation focuses on the core functionality of managing packages across different formats and systems.
+A lightweight, efficient package management system that provides direct access to system package managers without complex sandboxing. This enhanced implementation focuses on the core functionality of managing packages across different formats and systems with improved error handling, auto dependency updates, and package manager conflict resolution.
 
 ## Key Features
 
@@ -22,25 +22,38 @@ The system consists of a single C-based binary that:
 
 ## Installation
 
-The core binary is already installed as `/usr/local/bin/pkgmgr-core` and ready to use.
+To use the binary, you can copy it to a system directory:
+```bash
+sudo cp final-pkgmgr /usr/local/bin/trimorph
+```
 
 ## Usage
 
 ```bash
 # Install a local package file
-pkgmgr-core install <package-file>
+trimorph install <package-file>
 
 # Execute package manager commands
-pkgmgr-core run emerge --sync
-pkgmgr-core run apt update
-pkgmgr-core run pacman -Syu
+trimorph run emerge --sync
+trimorph run apt update
+trimorph run pacman -Syu
 
 # Check if a package manager exists on the system
-pkgmgr-core check emerge
+trimorph check emerge
 
 # List supported package formats
-pkgmgr-core supported-formats
+trimorph supported-formats
+
+# Check system status and detect running package managers
+trimorph status
 ```
+
+## Enhanced Features
+
+- **Conflict Detection**: Automatically detects if another package manager is running to prevent system conflicts
+- **Auto Dependency Updates**: Automatically updates system dependencies before installing packages
+- **Improved Error Handling**: Provides more detailed error messages and troubleshooting suggestions
+- **Status Monitoring**: Check system status with the new `status` command
 
 ## Supported Package Formats
 
